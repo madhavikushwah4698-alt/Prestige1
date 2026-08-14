@@ -30,6 +30,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
 const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
 const STATE_DOCUMENT_ID = 'prestige-state';
+const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables'];
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -39,7 +40,9 @@ const jsonHeaders = {
 };
 
 let mongoClient;
-let stateCollection;
+let mongoDb;
+let collections;
+let metaCollection;
 let dbConnectionPromise;
 
 function loadSeedDb() {
@@ -61,16 +64,20 @@ function loadSeedDb() {
 }
 
 async function connectDb() {
-  if (stateCollection) return;
+  if (mongoDb) return;
   if (dbConnectionPromise) return dbConnectionPromise;
 
   dbConnectionPromise = (async () => {
     mongoClient = new MongoClient(MONGODB_URI);
     await mongoClient.connect();
-    stateCollection = mongoClient.db(MONGODB_DB).collection(MONGODB_STATE_COLLECTION);
-    const existing = await stateCollection.findOne({ _id: STATE_DOCUMENT_ID });
-    if (!existing) {
-      await writeDb(loadSeedDb());
+    mongoDb = mongoClient.db(MONGODB_DB);
+    collections = Object.fromEntries(COLLECTION_NAMES.map(name => [name, mongoDb.collection(name)]));
+    metaCollection = mongoDb.collection('meta');
+
+    const hasCollectionData = await hasDocumentData();
+    if (!hasCollectionData) {
+      const legacyState = await mongoDb.collection(MONGODB_STATE_COLLECTION).findOne({ _id: STATE_DOCUMENT_ID });
+      await writeDb(legacyState?.state || loadSeedDb());
     }
   })();
 
@@ -83,21 +90,51 @@ async function connectDb() {
 }
 
 async function readDb() {
-  const document = await stateCollection.findOne({ _id: STATE_DOCUMENT_ID });
-  if (!document) {
-    const seed = loadSeedDb();
-    await writeDb(seed);
-    return seed;
+  const db = {};
+  for (const name of COLLECTION_NAMES) {
+    db[name] = (await collections[name].find({}, { projection: { _id: 0 } }).sort({ id: 1 }).toArray())
+      .map(stripMongoId);
   }
-  return document.state;
+
+  const metaDocument = await metaCollection.findOne({ _id: 'counters' }, { projection: { _id: 0 } });
+  db.meta = metaDocument || buildMetaFromData(db);
+  return db;
 }
 
 async function writeDb(db) {
-  await stateCollection.replaceOne(
-    { _id: STATE_DOCUMENT_ID },
-    { _id: STATE_DOCUMENT_ID, state: db, updatedAt: new Date() },
+  for (const name of COLLECTION_NAMES) {
+    await collections[name].deleteMany({});
+    const records = (db[name] || []).map(item => ({ ...item, _id: item.id }));
+    if (records.length) await collections[name].insertMany(records);
+  }
+
+  await metaCollection.replaceOne(
+    { _id: 'counters' },
+    { _id: 'counters', ...db.meta, updatedAt: new Date() },
     { upsert: true }
   );
+}
+
+async function hasDocumentData() {
+  for (const name of COLLECTION_NAMES) {
+    if (await collections[name].findOne({})) return true;
+  }
+  return Boolean(await metaCollection.findOne({ _id: 'counters' }));
+}
+
+function stripMongoId(document) {
+  const { _id, ...rest } = document;
+  return rest;
+}
+
+function buildMetaFromData(db) {
+  const nextIdFor = records => Math.max(0, ...records.map(item => Number(item.id) || 0)) + 1;
+  return {
+    nextAdminId: nextIdFor(db.admins || []),
+    nextFacultyId: nextIdFor(db.faculty || []),
+    nextInviteId: nextIdFor(db.invites || []),
+    nextTimetableId: nextIdFor(db.timetables || [])
+  };
 }
 
 function send(res, status, payload) {
@@ -678,7 +715,7 @@ async function start() {
 
   server.listen(PORT, () => {
     console.log(`Prestige backend running on http://localhost:${PORT}`);
-    console.log(`MongoDB connected: ${MONGODB_DB}.${MONGODB_STATE_COLLECTION}`);
+    console.log(`MongoDB connected: ${MONGODB_DB} (${COLLECTION_NAMES.join(', ')}, meta)`);
   });
 }
 
