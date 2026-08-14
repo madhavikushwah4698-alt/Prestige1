@@ -224,6 +224,20 @@
             }
         }
 
+        async function saveTeacherViewToApi(viewData) {
+            if (!apiToken || apiRole !== 'admin') return false;
+            try {
+                await apiRequest('/api/teacher-views', {
+                    method: 'POST',
+                    body: viewData
+                });
+                return true;
+            } catch (error) {
+                console.warn('Teacher view data was not saved to MongoDB:', error);
+                return false;
+            }
+        }
+
         let adminDB = [];
         let facultyDB = [];
         let inviteDB = [];
@@ -1197,7 +1211,14 @@ let nextId = 3;
                 .replace(/"/g, '&quot;');
         }
 
-        function showTeacherTimetable(teacherName) {
+        function getFacultyForTeacherName(teacherName) {
+            const normalizedTeacher = normalizeTeacherName(teacherName);
+            return facultyDB.find((faculty) => {
+                return faculty.status === 'approved' && normalizeTeacherName(faculty.name) === normalizedTeacher;
+            }) || null;
+        }
+
+        async function showTeacherTimetable(teacherName) {
             const normalizedTeacher = normalizeTeacherName(teacherName);
             const courseTables = [];
             Object.keys(dashboardTimetableDataByCourse).forEach(course => {
@@ -1334,6 +1355,18 @@ let nextId = 3;
 
             content.innerHTML = html;
             document.getElementById('teacherTimetableModal')?.classList.add('active');
+
+            const faculty = getFacultyForTeacherName(teacherName);
+            await saveTeacherViewToApi({
+                facultyId: faculty?.id || null,
+                teacherName,
+                normalizedTeacherName: normalizedTeacher,
+                email: faculty?.email || '',
+                dept: faculty?.dept || '',
+                empid: faculty?.empid || '',
+                viewedAt: new Date().toISOString(),
+                courseTables
+            });
         }
 
         function closeTeacherTimetableModal() {

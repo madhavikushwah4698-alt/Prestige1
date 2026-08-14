@@ -30,7 +30,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
 const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
 const STATE_DOCUMENT_ID = 'prestige-state';
-const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects', 'history'];
+const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects', 'history', 'teacherViews'];
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -57,6 +57,7 @@ function loadSeedDb() {
     timeSettings: [],
     subjects: [],
     history: [],
+    teacherViews: [],
     meta: {
       nextAdminId: 1,
       nextFacultyId: 1,
@@ -145,6 +146,7 @@ function mongoDocumentIdFor(collectionName, item) {
     ].join('|').toLowerCase();
   }
   if (collectionName === 'history') return item.id || crypto.randomUUID();
+  if (collectionName === 'teacherViews') return item.id || (item.facultyId ? `faculty-${item.facultyId}` : `teacher-${item.normalizedTeacherName || crypto.randomUUID()}`);
   return crypto.randomUUID();
 }
 
@@ -371,6 +373,29 @@ function sanitizeHistoryEntry(raw) {
     entryCount: Number(raw.entryCount) || 0,
     schedule: raw.schedule && typeof raw.schedule === 'object' ? raw.schedule : {},
     slotData: raw.slotData && typeof raw.slotData === 'object' ? raw.slotData : {}
+  };
+}
+
+function sanitizeTeacherView(raw) {
+  const teacherName = String(raw.teacherName || '').trim();
+  const normalizedTeacherName = String(raw.normalizedTeacherName || teacherName).trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!teacherName) return null;
+
+  const facultyId = raw.facultyId === null || raw.facultyId === undefined || raw.facultyId === ''
+    ? null
+    : Number(raw.facultyId);
+  const id = facultyId ? `faculty-${facultyId}` : `teacher-${normalizedTeacherName}`;
+
+  return {
+    id,
+    facultyId: facultyId || null,
+    teacherName,
+    normalizedTeacherName,
+    email: String(raw.email || '').trim(),
+    dept: String(raw.dept || '').trim(),
+    empid: String(raw.empid || '').trim(),
+    viewedAt: raw.viewedAt ? String(raw.viewedAt) : new Date().toISOString(),
+    courseTables: Array.isArray(raw.courseTables) ? raw.courseTables : []
   };
 }
 
@@ -884,6 +909,47 @@ async function handleHistory(req, res, pathname) {
   return notFound(res);
 }
 
+async function handleTeacherViews(req, res, pathname) {
+  const db = await readDb();
+  const auth = requireAuth(req);
+  if (!auth) return send(res, 401, { error: 'Login required' });
+
+  if (routeKey(req.method, pathname) === 'GET /api/teacher-views') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    return send(res, 200, { teacherViews: db.teacherViews || [] });
+  }
+
+  if (routeKey(req.method, pathname) === 'POST /api/teacher-views') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    const teacherView = sanitizeTeacherView(body);
+    if (!teacherView) return send(res, 400, { error: 'No valid teacher view data provided' });
+
+    db.teacherViews = db.teacherViews || [];
+    const existingIndex = db.teacherViews.findIndex(item => item.id === teacherView.id);
+    const savedView = {
+      ...teacherView,
+      updatedAt: new Date().toISOString()
+    };
+    if (existingIndex >= 0) {
+      db.teacherViews[existingIndex] = {
+        ...db.teacherViews[existingIndex],
+        ...savedView
+      };
+    } else {
+      db.teacherViews.push({
+        ...savedView,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    await writeDb(db);
+    return send(res, 200, { teacherView: savedView });
+  }
+
+  return notFound(res);
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -907,6 +973,7 @@ async function handleRequest(req, res) {
     if (pathname.startsWith('/api/time-settings')) return handleTimeSettings(req, res, pathname);
     if (pathname.startsWith('/api/subjects')) return handleSubjects(req, res, pathname);
     if (pathname.startsWith('/api/history')) return handleHistory(req, res, pathname);
+    if (pathname.startsWith('/api/teacher-views')) return handleTeacherViews(req, res, pathname);
     if (serveStatic(req, res, pathname)) return;
     return notFound(res);
   } catch (error) {
