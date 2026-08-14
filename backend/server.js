@@ -30,12 +30,12 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
 const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
 const STATE_DOCUMENT_ID = 'prestige-state';
-const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings'];
+const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects'];
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 };
 
@@ -55,6 +55,7 @@ function loadSeedDb() {
     invites: [],
     timetables: [],
     timeSettings: [],
+    subjects: [],
     meta: {
       nextAdminId: 1,
       nextFacultyId: 1,
@@ -105,7 +106,7 @@ async function readDb() {
 async function writeDb(db) {
   for (const name of COLLECTION_NAMES) {
     await collections[name].deleteMany({});
-    const records = (db[name] || []).map(item => ({ ...item, _id: item.id || `${item.course}|${item.semester}` }));
+    const records = (db[name] || []).map(item => ({ ...item, _id: mongoDocumentIdFor(name, item) }));
     if (records.length) await collections[name].insertMany(records);
   }
 
@@ -126,6 +127,23 @@ async function hasDocumentData() {
 function stripMongoId(document) {
   const { _id, ...rest } = document;
   return rest;
+}
+
+function mongoDocumentIdFor(collectionName, item) {
+  if (item.id) return item.id;
+  if (collectionName === 'timeSettings') return `${item.course}|${item.semester}`;
+  if (collectionName === 'subjects') {
+    return [
+      item.course || '',
+      item.semester || '',
+      item.category || 'main',
+      item.electiveType || 'program',
+      item.isLab ? 'lab' : 'subject',
+      item.name || '',
+      item.code || ''
+    ].join('|').toLowerCase();
+  }
+  return crypto.randomUUID();
 }
 
 function buildMetaFromData(db) {
@@ -304,6 +322,34 @@ function sanitizeTimeSetting(raw) {
     workingDays: Array.isArray(setting.workingDays) ? setting.workingDays.map(day => String(day).trim()).filter(Boolean) : [],
     periodTimes: Array.isArray(setting.periodTimes) ? setting.periodTimes.map(time => String(time).trim()).filter(Boolean) : [],
     periodCount: Number(setting.periodCount) || (Array.isArray(setting.periodTimes) ? setting.periodTimes.length : 0)
+  };
+}
+
+function sanitizeSubject(raw) {
+  const name = String(raw.name || '').trim();
+  if (!name) return null;
+  const course = String(raw.course || 'B.Tech').trim() || 'B.Tech';
+  const semester = String(raw.semester || 'semester1').trim() || 'semester1';
+  const category = String(raw.category || 'main').trim() === 'elective' ? 'elective' : 'main';
+  const electiveType = category === 'elective' && String(raw.electiveType || '').trim() === 'open' ? 'open' : 'program';
+
+  return {
+    id: [
+      course,
+      semester,
+      category,
+      electiveType,
+      raw.isLab ? 'lab' : 'subject',
+      name,
+      String(raw.code || '').trim()
+    ].join('|').toLowerCase(),
+    name,
+    code: String(raw.code || '').trim(),
+    category,
+    electiveType,
+    isLab: Boolean(raw.isLab),
+    course,
+    semester
   };
 }
 
@@ -752,6 +798,37 @@ async function handleTimeSettings(req, res, pathname) {
   return notFound(res);
 }
 
+async function handleSubjects(req, res, pathname) {
+  const db = await readDb();
+  const auth = requireAuth(req);
+  if (!auth) return send(res, 401, { error: 'Login required' });
+
+  if (routeKey(req.method, pathname) === 'GET /api/subjects') {
+    return send(res, 200, { subjects: db.subjects || [] });
+  }
+
+  if (routeKey(req.method, pathname) === 'PUT /api/subjects') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    const incoming = Array.isArray(body.subjects) ? body.subjects : [];
+    const seen = new Set();
+    const subjects = incoming.map(sanitizeSubject).filter((subject) => {
+      if (!subject || seen.has(subject.id)) return false;
+      seen.add(subject.id);
+      return true;
+    });
+
+    db.subjects = subjects.map(subject => ({
+      ...subject,
+      updatedAt: new Date().toISOString()
+    }));
+    await writeDb(db);
+    return send(res, 200, { subjects: db.subjects });
+  }
+
+  return notFound(res);
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -773,6 +850,7 @@ async function handleRequest(req, res) {
     if (pathname.startsWith('/api/admins')) return handleAdmins(req, res, pathname);
     if (pathname.startsWith('/api/timetables')) return handleTimetables(req, res, pathname);
     if (pathname.startsWith('/api/time-settings')) return handleTimeSettings(req, res, pathname);
+    if (pathname.startsWith('/api/subjects')) return handleSubjects(req, res, pathname);
     if (serveStatic(req, res, pathname)) return;
     return notFound(res);
   } catch (error) {

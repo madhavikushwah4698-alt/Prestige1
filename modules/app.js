@@ -147,6 +147,51 @@
             }
         }
 
+        async function loadSubjectsFromApi() {
+            if (!apiToken) return false;
+            try {
+                const payload = await apiRequest('/api/subjects');
+                if (Array.isArray(payload.subjects)) {
+                    const subjectKey = (item) => [
+                        item.course || 'B.Tech',
+                        item.semester || 'semester1',
+                        item.category || 'main',
+                        item.electiveType || 'program',
+                        item.isLab ? 'lab' : 'subject',
+                        String(item.name || '').trim().toLowerCase(),
+                        String(item.code || '').trim().toLowerCase()
+                    ].join('|');
+                    const merged = new Map(subjectCatalog.map(item => [subjectKey(item), item]));
+                    payload.subjects.forEach(subject => merged.set(subjectKey(subject), subject));
+                    subjectCatalog = Array.from(merged.values());
+                    renderSubjects(document.getElementById('subjectSearch')?.value || '');
+                    try { if (document.getElementById('dashboardEditModalBackdrop')?.classList.contains('active')) populateEditSlotSubjectDropdown(); } catch (e) {}
+                }
+                return true;
+            } catch (error) {
+                if (error.status === 401) setApiSession('', '');
+                console.warn('Subjects were not loaded from MongoDB:', error);
+                return false;
+            }
+        }
+
+        async function saveSubjectsToApi() {
+            if (!apiToken || apiRole !== 'admin') return false;
+            try {
+                const payload = await apiRequest('/api/subjects', {
+                    method: 'PUT',
+                    body: { subjects: subjectCatalog }
+                });
+                if (Array.isArray(payload.subjects)) {
+                    subjectCatalog = payload.subjects;
+                }
+                return true;
+            } catch (error) {
+                console.warn('Subjects were not saved to MongoDB:', error);
+                return false;
+            }
+        }
+
         let adminDB = [];
         let facultyDB = [];
         let inviteDB = [];
@@ -563,9 +608,11 @@ let nextId = 3;
                     await loadAdminsFromApi();
                     await loadInvitesFromApi();
                     await loadTimeSettingsFromApi();
+                    await loadSubjectsFromApi();
                     openAdmin();
                 } else {
                     await loadTimeSettingsFromApi();
+                    await loadSubjectsFromApi();
                     openFaculty(result.user);
                 }
                 return;
@@ -1406,7 +1453,7 @@ let nextId = 3;
             });
         }
 
-        function addSubject() {
+        async function addSubject() {
             const input = document.getElementById('subjectName');
             if (!input) return;
 
@@ -1423,11 +1470,20 @@ let nextId = 3;
                 return;
             }
 
-            subjectCatalog.push({ name, code: '', category, electiveType, isLab: Boolean(isLab), course, semester });
+            const subject = { name, code: '', category, electiveType, isLab: Boolean(isLab), course, semester };
+            subjectCatalog.push(subject);
             input.value = '';
             document.getElementById('isLab').checked = false;
             renderSubjects();
             try { if (document.getElementById('dashboardEditModalBackdrop')?.classList.contains('active')) populateEditSlotSubjectDropdown(); } catch (e) {}
+
+            const saved = await saveSubjectsToApi();
+            if (!saved) {
+                subjectCatalog = subjectCatalog.filter((item) => item !== subject);
+                renderSubjects(document.getElementById('subjectSearch')?.value || '');
+                try { if (document.getElementById('dashboardEditModalBackdrop')?.classList.contains('active')) populateEditSlotSubjectDropdown(); } catch (e) {}
+                alert('Backend unavailable. Subject was not saved to MongoDB.');
+            }
         }
 
         function filterSubjects() {
@@ -1450,7 +1506,7 @@ let nextId = 3;
             const file = input.files[0];
             const reader = new FileReader();
 
-            reader.onload = function (e) {
+            reader.onload = async function (e) {
                 try {
                     const data = new Uint8Array(e.target.result);
                     const workbook = XLSX.read(data, { type: 'array' });
@@ -1524,6 +1580,10 @@ let nextId = 3;
                     } else {
                         renderSubjects(document.getElementById('subjectSearch')?.value || '');
                         try { if (document.getElementById('dashboardEditModalBackdrop')?.classList.contains('active')) populateEditSlotSubjectDropdown(); } catch (e) {}
+                        const saved = await saveSubjectsToApi();
+                        if (!saved) {
+                            alert('Imported locally, but subjects were not saved to MongoDB. Please sign in as admin and try again.');
+                        }
                         alert(`Imported ${subjectsAdded} subject${subjectsAdded !== 1 ? 's' : ''} and ${labsAdded} lab${labsAdded !== 1 ? 's' : ''}.`);
                     }
                 } catch (error) {
