@@ -1,0 +1,17 @@
+{
+  "name": "prestige-access-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend API for Prestige Institute Access Portal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "mongodb": "^6.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

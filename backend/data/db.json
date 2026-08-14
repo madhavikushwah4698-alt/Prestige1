@@ -1,0 +1,55 @@
+{
+  "admins": [
+    {
+      "id": 1,
+      "name": "Registrar Admin",
+      "email": "admin@prestige.edu",
+      "passwordHash": "pbkdf2_sha256$120000$91fb4e9337e82c6b048838a356767450$d4255995e350711a34f514fcb0a23c0c56ec979baac641b0ba3982b55e65b109",
+      "createdAt": "2026-08-15T00:00:00.000Z"
+    }
+  ],
+  "faculty": [
+    {
+      "id": 1,
+      "name": "Dr. Neha Kulkarni",
+      "dept": "Mathematics",
+      "empid": "PER-1042",
+      "email": "neha.k@prestige.edu",
+      "passwordHash": "pbkdf2_sha256$120000$27499ade6f1d373f2b11fbecdfa22027$f5e752db74b51194d5e2e959d2dd00d13c1aa8d146ca79a6260d48d1eaea54d5",
+      "status": "pending",
+      "appliedOn": "28 Jul 2026",
+      "createdAt": "2026-07-28T00:00:00.000Z"
+    },
+    {
+      "id": 2,
+      "name": "Prof. Arjun Mehta",
+      "dept": "Physics",
+      "empid": "PER-0987",
+      "email": "arjun.m@prestige.edu",
+      "passwordHash": "pbkdf2_sha256$120000$27499ade6f1d373f2b11fbecdfa22027$f5e752db74b51194d5e2e959d2dd00d13c1aa8d146ca79a6260d48d1eaea54d5",
+      "status": "approved",
+      "appliedOn": "12 Jul 2026",
+      "approvedOn": "14 Jul 2026",
+      "createdAt": "2026-07-12T00:00:00.000Z"
+    }
+  ],
+  "invites": [
+    {
+      "id": 2,
+      "email": "t@gmail.com",
+      "inviteCode": "0309b845830281707a3f21f94e39e176",
+      "status": "pending",
+      "createdOn": "15 Aug 2026",
+      "createdAt": "2026-08-14T18:54:04.048Z"
+    }
+    
+   
+  ],
+  "timetables": [],
+  "meta": {
+    "nextAdminId": 2,
+    "nextFacultyId": 3,
+    "nextInviteId": 5,
+    "nextTimetableId": 1
+  }
+}
