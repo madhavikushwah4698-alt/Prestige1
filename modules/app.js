@@ -96,6 +96,57 @@
             }
         }
 
+        function applyTimeSettingRecord(record) {
+            if (!record || !record.course || !record.semester) return;
+            ensureDashboardCourseExists(record.course);
+            const settings = getDashboardCourseSettings(record.course, record.semester);
+            Object.assign(settings, {
+                start: record.start || settings.start,
+                end: record.end || settings.end,
+                startDate: record.startDate || '',
+                endDate: record.endDate || '',
+                duration: Number(record.duration) || settings.duration,
+                labDuration: Number(record.labDuration) || settings.labDuration,
+                lunchStart: record.lunchStart || settings.lunchStart,
+                lunchEnd: record.lunchEnd || settings.lunchEnd,
+                workingDays: Array.isArray(record.workingDays) && record.workingDays.length ? record.workingDays.slice() : settings.workingDays,
+                periodTimes: Array.isArray(record.periodTimes) && record.periodTimes.length ? record.periodTimes.slice() : settings.periodTimes,
+                periodCount: Number(record.periodCount) || (Array.isArray(record.periodTimes) ? record.periodTimes.length : settings.periodCount)
+            });
+        }
+
+        async function loadTimeSettingsFromApi() {
+            if (!apiToken) return false;
+            try {
+                const payload = await apiRequest('/api/time-settings');
+                (payload.settings || []).forEach(applyTimeSettingRecord);
+                if (typeof loadTimeSettingCourseSettings === 'function') {
+                    loadTimeSettingCourseSettings(dashboardCourse);
+                }
+                if (typeof renderDashboardTimetable === 'function') {
+                    renderDashboardTimetable();
+                }
+                return true;
+            } catch (error) {
+                if (error.status === 401) setApiSession('', '');
+                return false;
+            }
+        }
+
+        async function saveTimeSettingsToApi(records) {
+            if (!apiToken || apiRole !== 'admin') return false;
+            try {
+                await apiRequest('/api/time-settings', {
+                    method: 'POST',
+                    body: { settings: records }
+                });
+                return true;
+            } catch (error) {
+                console.warn('Time settings were not saved to MongoDB:', error);
+                return false;
+            }
+        }
+
         let adminDB = [];
         let facultyDB = [];
         let inviteDB = [];
@@ -511,8 +562,10 @@ let nextId = 3;
                     await loadFacultyFromApi();
                     await loadAdminsFromApi();
                     await loadInvitesFromApi();
+                    await loadTimeSettingsFromApi();
                     openAdmin();
                 } else {
+                    await loadTimeSettingsFromApi();
                     openFaculty(result.user);
                 }
                 return;
@@ -609,6 +662,7 @@ let nextId = 3;
             await loadFacultyFromApi();
             await loadAdminsFromApi();
             await loadInvitesFromApi();
+            await loadTimeSettingsFromApi();
             renderManageFaculty();
             const dateStr = formatToday();
             document.getElementById("admin-date").textContent = dateStr;
@@ -2072,7 +2126,7 @@ let nextId = 3;
             }
         }
 
-        function applyTimeSettingPanel() {
+        async function applyTimeSettingPanel() {
             const start = document.getElementById('time-setting-start').value;
             const end = document.getElementById('time-setting-end').value;
             const startDate = document.getElementById('time-setting-start-date').value;
@@ -2175,14 +2229,6 @@ let nextId = 3;
                 `Lunch ${lunchStart}-${lunchEnd}`,
                 applyAll ? 'Applied to all semesters' : 'Current semester only'
             ].join(' | ');
-            const status = document.createElement('div');
-            status.className = 'hint-box';
-            status.innerHTML = `<b>Saved:</b> ${summary}`;
-            const card = document.querySelector('#panel-time-setting .card');
-            const oldHint = card.querySelector('.hint-box');
-            if (oldHint) oldHint.remove();
-            card.appendChild(status);
-
             // Update dashboardTimetableData structures: set each selected day array to the new period layout
             const targetData = getDashboardTimetableData(course);
             const semesterKeys = applyAll ? Object.keys(targetData) : [semester];
@@ -2217,11 +2263,26 @@ let nextId = 3;
                 }
             });
 
+            const recordsToSave = applySemesters.map((sem) => ({
+                course,
+                semester: sem,
+                ...getDashboardCourseSettings(course, sem)
+            }));
+            const savedToMongo = await saveTimeSettingsToApi(recordsToSave);
+
+            const status = document.createElement('div');
+            status.className = 'hint-box';
+            status.innerHTML = `<b>${savedToMongo ? 'Saved to MongoDB' : 'Saved locally'}:</b> ${summary}${savedToMongo ? '' : '<br><span style="color:#b45309;">MongoDB save failed because the backend is unavailable.</span>'}`;
+            const card = document.querySelector('#panel-time-setting .card');
+            const oldHint = card.querySelector('.hint-box');
+            if (oldHint) oldHint.remove();
+            card.appendChild(status);
+
             // Re-render timetable with updated layout
             renderDashboardTimetable();
         }
 
-        function resetTimeSettingPanel() {
+        async function resetTimeSettingPanel() {
             const course = document.getElementById('time-setting-course')?.value || 'B.Tech';
             const semester = document.getElementById('time-setting-current-semester')?.value || 'semester1';
             const applyAll = document.getElementById('time-setting-apply-all')?.checked;
@@ -2262,6 +2323,12 @@ let nextId = 3;
             if (dashboardCourse === course && targetSemesters.includes(dashboardTimetableState.currentSemester)) {
                 renderDashboardTimetable();
             }
+
+            await saveTimeSettingsToApi(targetSemesters.map((sem) => ({
+                course,
+                semester: sem,
+                ...getDashboardCourseSettings(course, sem)
+            })));
         }
 
         /* ============ DASHBOARD TIMETABLE FRAGMENT ============ */

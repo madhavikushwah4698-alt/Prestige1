@@ -30,7 +30,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
 const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
 const STATE_DOCUMENT_ID = 'prestige-state';
-const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables'];
+const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings'];
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -54,6 +54,7 @@ function loadSeedDb() {
     faculty: [],
     invites: [],
     timetables: [],
+    timeSettings: [],
     meta: {
       nextAdminId: 1,
       nextFacultyId: 1,
@@ -104,7 +105,7 @@ async function readDb() {
 async function writeDb(db) {
   for (const name of COLLECTION_NAMES) {
     await collections[name].deleteMany({});
-    const records = (db[name] || []).map(item => ({ ...item, _id: item.id }));
+    const records = (db[name] || []).map(item => ({ ...item, _id: item.id || `${item.course}|${item.semester}` }));
     if (records.length) await collections[name].insertMany(records);
   }
 
@@ -280,6 +281,30 @@ function isEmail(value) {
 
 function requireFields(body, fields) {
   return fields.filter(field => !String(body[field] || '').trim());
+}
+
+function sanitizeTimeSetting(raw) {
+  const course = String(raw.course || '').trim();
+  const semester = String(raw.semester || '').trim();
+  if (!course || !semester) return null;
+
+  const setting = raw.settings && typeof raw.settings === 'object' ? raw.settings : raw;
+  return {
+    id: `${course}|${semester}`,
+    course,
+    semester,
+    start: String(setting.start || '').trim(),
+    end: String(setting.end || '').trim(),
+    startDate: String(setting.startDate || '').trim(),
+    endDate: String(setting.endDate || '').trim(),
+    duration: Number(setting.duration) || 0,
+    labDuration: Number(setting.labDuration) || 0,
+    lunchStart: String(setting.lunchStart || '').trim(),
+    lunchEnd: String(setting.lunchEnd || '').trim(),
+    workingDays: Array.isArray(setting.workingDays) ? setting.workingDays.map(day => String(day).trim()).filter(Boolean) : [],
+    periodTimes: Array.isArray(setting.periodTimes) ? setting.periodTimes.map(time => String(time).trim()).filter(Boolean) : [],
+    periodCount: Number(setting.periodCount) || (Array.isArray(setting.periodTimes) ? setting.periodTimes.length : 0)
+  };
 }
 
 function routeKey(method, pathname) {
@@ -683,6 +708,50 @@ async function handleTimetables(req, res, pathname) {
   return notFound(res);
 }
 
+async function handleTimeSettings(req, res, pathname) {
+  const db = await readDb();
+  const auth = requireAuth(req);
+  if (!auth) return send(res, 401, { error: 'Login required' });
+
+  if (routeKey(req.method, pathname) === 'GET /api/time-settings') {
+    return send(res, 200, { settings: db.timeSettings || [] });
+  }
+
+  if (routeKey(req.method, pathname) === 'POST /api/time-settings') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    const incoming = Array.isArray(body.settings) ? body.settings : [body];
+    const sanitized = incoming.map(sanitizeTimeSetting).filter(Boolean);
+    if (!sanitized.length) return send(res, 400, { error: 'No valid time settings provided' });
+
+    db.timeSettings = db.timeSettings || [];
+    const now = new Date().toISOString();
+    sanitized.forEach((setting) => {
+      const existingIndex = db.timeSettings.findIndex(item => item.id === setting.id);
+      const savedSetting = {
+        ...setting,
+        updatedAt: now
+      };
+      if (existingIndex >= 0) {
+        db.timeSettings[existingIndex] = {
+          ...db.timeSettings[existingIndex],
+          ...savedSetting
+        };
+      } else {
+        db.timeSettings.push({
+          ...savedSetting,
+          createdAt: now
+        });
+      }
+    });
+
+    await writeDb(db);
+    return send(res, 200, { settings: sanitized });
+  }
+
+  return notFound(res);
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -703,6 +772,7 @@ async function handleRequest(req, res) {
     if (pathname.startsWith('/api/invites')) return handleInvites(req, res, pathname);
     if (pathname.startsWith('/api/admins')) return handleAdmins(req, res, pathname);
     if (pathname.startsWith('/api/timetables')) return handleTimetables(req, res, pathname);
+    if (pathname.startsWith('/api/time-settings')) return handleTimeSettings(req, res, pathname);
     if (serveStatic(req, res, pathname)) return;
     return notFound(res);
   } catch (error) {
