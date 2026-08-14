@@ -1,5 +1,5 @@
 ﻿        /* ============ IN-MEMORY UI STATE + MONGODB-BACKED API ============ */
-        const API_BASE_URL = window.PRESTIGE_API_BASE_URL || 'http://localhost:4000';
+        const API_BASE_URL = window.PRESTIGE_API_BASE_URL || window.location.origin;
         let apiToken = '';
         let apiRole = '';
         let apiOnline = false;

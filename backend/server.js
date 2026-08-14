@@ -40,6 +40,7 @@ const jsonHeaders = {
 
 let mongoClient;
 let stateCollection;
+let dbConnectionPromise;
 
 function loadSeedDb() {
   if (fs.existsSync(SEED_DB_PATH)) {
@@ -60,12 +61,24 @@ function loadSeedDb() {
 }
 
 async function connectDb() {
-  mongoClient = new MongoClient(MONGODB_URI);
-  await mongoClient.connect();
-  stateCollection = mongoClient.db(MONGODB_DB).collection(MONGODB_STATE_COLLECTION);
-  const existing = await stateCollection.findOne({ _id: STATE_DOCUMENT_ID });
-  if (!existing) {
-    await writeDb(loadSeedDb());
+  if (stateCollection) return;
+  if (dbConnectionPromise) return dbConnectionPromise;
+
+  dbConnectionPromise = (async () => {
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    stateCollection = mongoClient.db(MONGODB_DB).collection(MONGODB_STATE_COLLECTION);
+    const existing = await stateCollection.findOne({ _id: STATE_DOCUMENT_ID });
+    if (!existing) {
+      await writeDb(loadSeedDb());
+    }
+  })();
+
+  try {
+    return await dbConnectionPromise;
+  } catch (error) {
+    dbConnectionPromise = undefined;
+    throw error;
   }
 }
 
@@ -643,6 +656,8 @@ async function handleRequest(req, res) {
   }
 
   try {
+    await connectDb();
+
     if (routeKey(req.method, pathname) === 'GET /api/health') {
       return send(res, 200, { ok: true, service: 'prestige-access-backend' });
     }
@@ -659,7 +674,6 @@ async function handleRequest(req, res) {
 }
 
 async function start() {
-  await connectDb();
   const server = http.createServer(handleRequest);
 
   server.listen(PORT, () => {
@@ -668,8 +682,12 @@ async function start() {
   });
 }
 
-start().catch(error => {
-  console.error('Failed to start Prestige backend:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  start().catch(error => {
+    console.error('Failed to start Prestige backend:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = handleRequest;
 

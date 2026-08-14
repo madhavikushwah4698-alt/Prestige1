@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "backend/server.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "claude_clone.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "modules/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "backend/server.js"
+    },
+    {
+      "src": "/modules/(.*)",
+      "dest": "/modules/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "claude_clone.html"
+    }
+  ]
+}
