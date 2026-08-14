@@ -1,5 +1,6 @@
 ﻿        /* ============ IN-MEMORY UI STATE + MONGODB-BACKED API ============ */
         const API_BASE_URL = window.PRESTIGE_API_BASE_URL || window.location.origin;
+        const LOCAL_API_BASE_URL = 'http://localhost:4000';
         let apiToken = '';
         let apiRole = '';
         let apiOnline = false;
@@ -8,15 +9,26 @@
             const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
             if (apiToken && options.auth !== false) headers.Authorization = `Bearer ${apiToken}`;
             let response;
+            const requestOptions = {
+                ...options,
+                headers,
+                body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
+            };
             try {
-                response = await fetch(`${API_BASE_URL}${path}`, {
-                    ...options,
-                    headers,
-                    body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
-                });
+                response = await fetch(`${API_BASE_URL}${path}`, requestOptions);
             } catch (error) {
+                const canTryLocalApi = API_BASE_URL !== LOCAL_API_BASE_URL && ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+                if (canTryLocalApi) {
+                    try {
+                        response = await fetch(`${LOCAL_API_BASE_URL}${path}`, requestOptions);
+                    } catch {
+                        error.network = true;
+                        throw error;
+                    }
+                } else {
                 error.network = true;
                 throw error;
+                }
             }
 
             const payload = await response.json().catch(() => ({}));
@@ -509,7 +521,7 @@ let nextId = 3;
                     showPendingScreen(error.payload.faculty.status === 'rejected' ? 'rejected' : 'pending', error.payload.faculty);
                     return;
                 }
-                errBox.textContent = error.network ? 'Backend unavailable. Login requires MongoDB.' : (error.message || 'Unable to sign in.');
+                errBox.textContent = error.network ? 'Backend unavailable. Start the backend server and check MongoDB connection.' : (error.message || 'Unable to sign in.');
                 errBox.classList.add("show");
                 return;
             }
