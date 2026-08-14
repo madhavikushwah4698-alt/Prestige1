@@ -1,0 +1,912 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prestige Institute - Access Portal</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="modules/styles.css">
+</head>
+
+<body>
+
+    <!-- =================== NOTIFICATION TOAST =================== -->
+    <div id="notification-toast" class="notification-toast">
+        <div class="notification-content">
+            <div class="notification-icon">OK</div>
+            <div>
+                <div class="notification-title" id="notification-title"></div>
+                <div class="notification-message" id="notification-message"></div>
+            </div>
+        </div>
+        <button class="notification-close" onclick="closeNotification()">x</button>
+    </div>
+
+    <!-- =================== LOGIN SCREEN =================== -->
+    <div class="screen active" id="screen-login">
+        <div class="split">
+            <div class="split-brand">
+                <div class="brand-mark">
+                    <div class="brand-crest">M</div>
+                    <div class="brand-name">Prestige Institute<span>Access Portal</span></div>
+                </div>
+                <div class="brand-hero">
+                    <div class="brand-eyebrow">Staff &amp; Faculty Sign-In</div>
+                    <h1>One gate for the whole department.</h1>
+                    <p>Faculty register once and wait for the registrar's approval. Admins review every request and open
+                        the tools that keep the office running.</p>
+                </div>
+                <div class="ledger-foot">
+                    <div><strong id="stat-approved-count">0</strong>Approved faculty</div>
+                    <div><strong id="stat-pending-count">0</strong>Awaiting review</div>
+                </div>
+            </div>
+
+            <div class="split-form">
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <h2 id="login-title">Sign in</h2>
+                        <p id="login-sub">Enter your credentials to reach your dashboard.</p>
+                    </div>
+
+                    <div class="role-tabs">
+                        <div class="role-tab active" id="tab-faculty" onclick="setLoginRole('faculty')">Faculty</div>
+                        <div class="role-tab" id="tab-admin" onclick="setLoginRole('admin')">Admin</div>
+                    </div>
+
+                    <div class="error-msg" id="login-error"></div>
+
+                    <div class="field">
+                        <label>Email address</label>
+                        <input type="email" id="login-email" placeholder="you@prestige.edu">
+                    </div>
+                    <div class="field">
+                        <label>Password</label>
+                        <input type="password" id="login-password" placeholder="Enter your password ">
+                    </div>
+
+                    <button class="btn btn-primary" onclick="handleLogin()">Sign in</button>
+
+                    <div class="form-foot" id="signup-prompt">
+                        New faculty member? <a onclick="showScreen('signup')">Register for access</a>
+                    </div>
+
+                    <div class="hint-box" id="login-hint">
+                        Demo admin login - <b>admin@prestige.edu</b> / <b>Admin@123</b>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================== FACULTY SIGNUP =================== -->
+    <div class="screen" id="screen-signup">
+        <div class="split">
+            <div class="split-brand">
+                <div class="brand-mark">
+                    <div class="brand-crest">P</div>
+                    <div class="brand-name">Prestige Institute<span>Access Portal</span></div>
+                </div>
+                <div class="brand-hero">
+                    <div class="brand-eyebrow">Faculty Registration</div>
+                    <h1>Tell us who you are.<br>We'll take it from here.</h1>
+                    <p>Your request is sent straight to the registrar. Once approved, you'll sign in with the email and
+                        password you choose now.</p>
+                </div>
+                <div class="ledger-foot">
+                    <div><strong>1</strong>Register</div>
+                    <div><strong>2</strong>Admin reviews</div>
+                    <div><strong>3</strong>You're in</div>
+                </div>
+            </div>
+
+            <div class="split-form">
+                <div class="form-card">
+                    <div class="form-card-head">
+                        <h2>Register as faculty</h2>
+                        <p>This creates a pending request - not an active account.</p>
+                    </div>
+
+                    <div class="error-msg" id="signup-error"></div>
+
+                    <div class="field">
+                        <label>Full name</label>
+                        <input type="text" id="su-name" placeholder="Dr. Asha Rao">
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label>Department</label>
+                            <input type="text" id="su-dept" placeholder="Computer Science">
+                        </div>
+                        <div class="field">
+                            <label>Employee ID</label>
+                            <input type="text" id="su-empid" placeholder="PER-2201">
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label>Email address</label>
+                        <input type="email" id="su-email" placeholder="you@prestige.edu">
+                    </div>
+                    <div class="field">
+                        <label>Create password</label>
+                        <input type="password" id="su-password" placeholder="||||||||">
+                    </div>
+
+                    <button class="btn btn-brass" onclick="handleSignup()">Submit for approval</button>
+
+                    <div class="form-foot">
+                        Already registered? <a onclick="showScreen('login')">Back to sign in</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================== PENDING / STATUS SCREEN =================== -->
+    <div class="screen" id="screen-pending">
+        <div class="split-form" style="background:var(--parchment);">
+            <div class="stamp-wrap">
+                <div class="stamp" id="pending-stamp">
+                    <div class="stamp-text" id="pending-stamp-text">PENDING<br>REVIEW</div>
+                </div>
+                <h2 id="pending-title">Request received</h2>
+                <p id="pending-text">Your registration has been sent to the admin office. You'll be able to sign in as
+                    soon as it's approved.</p>
+                <button class="btn btn-ghost" style="width:auto; padding:11px 26px;" onclick="showScreen('login')">Back
+                    to sign in</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================== ADMIN DASHBOARD =================== -->
+    <div class="screen" id="screen-admin">
+        <div class="dash">
+            <div class="sidebar">
+                <div class="brand-mark">
+                    <div class="brand-crest">P</div>
+                    <div class="brand-name">Prestige Institute<span>Admin Console</span></div>
+                </div>
+
+                <div class="side-label">Tools</div>
+
+                <div class="side-group">
+                    <div class="side-group-label">Administration</div>
+                    <div class="side-item" id="nav-manage-admin" onclick="setAdminPanel('manage-admin')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="9" cy="8" r="3.2" />
+                            <path d="M3.5 20c0-3.3 2.5-5.8 5.8-5.8s5.5 2.5 5.5 5.8" />
+                            <path d="M16.5 8a2.8 2.8 0 1 1 0 5.6" />
+                            <path d="M20.5 20c0-2.7-2-4.9-4.5-5.5" />
+                        </svg>
+                        Manage Admin
+                    </div>
+                    <div class="side-item" id="nav-manage" onclick="setAdminPanel('manage')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="9" cy="8" r="3.2" />
+                            <path d="M3.5 20c0-3.3 2.5-5.8 5.8-5.8s5.5 2.5 5.5 5.8" />
+                            <path d="M16.5 8a2.8 2.8 0 1 1 0 5.6" />
+                            <path d="M20.5 20c0-2.7-2-4.9-4.5-5.5" />
+                        </svg>
+                        Manage Faculty
+                        <span class="side-badge" id="sidebar-pending-badge">0</span>
+                    </div>
+                </div>
+
+                <div class="side-group">
+                    <div class="side-group-label">Workload Setup</div>
+                    <div class="side-item active" id="nav-convertor" onclick="setAdminPanel('convertor')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M7 7h11l-3-3M17 17H6l3 3" />
+                        </svg>
+                        Convertor
+                    </div>
+                    <div class="side-item" id="nav-time-setting" onclick="setAdminPanel('time-setting')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="8" />
+                            <path d="M12 7v5l3 3" />
+                        </svg>
+                        Time Setting
+                    </div>
+                    <div class="side-item" id="nav-add-faculty" onclick="setAdminPanel('add-faculty')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <path d="M19 8v6M22 11h-6" />
+                        </svg>
+                        Add Faculty
+                    </div>
+                    <div class="side-item" id="nav-add-subject" onclick="setAdminPanel('add-subject')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                        Add Subject
+                    </div>
+                </div>
+
+                <div class="side-group">
+                    <div class="side-group-label">Reports</div>
+                    <div class="side-item" id="nav-dashboard" onclick="setAdminPanel('dashboard')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M3 12h18M12 3v18" />
+                        </svg>
+                        Dashboard
+                    </div>
+                    <div class="side-item" id="nav-view-history" onclick="setAdminPanel('view-history')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M12 8v4l3 3" />
+                            <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+                        </svg>
+                        View History
+                    </div>
+                    <div class="side-item" id="nav-see-workload" onclick="setAdminPanel('see-workload')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M4 6h16M4 12h10M4 18h16" />
+                            <path d="M17 16l3-3-3-3" />
+                        </svg>
+                        See Workload
+                    </div>
+                </div>
+
+                <div class="sidebar-foot">
+                    <div class="who">Registrar Admin</div>
+                    <div>admin@prestige.edu</div>
+                    <a class="logout-link" onclick="logout()">Sign out</a>
+                </div>
+            </div>
+
+            <div class="main">
+                <!-- CONVERTOR PANEL -->
+                <div class="panel active" id="panel-convertor">
+                    <div class="main-head">
+                        <div>
+                            <h1>Workload Converter</h1>
+                            <!-- <p>Open the HOD workload converter directly in this panel.</p> -->
+                        </div>
+                        <div class="date-chip mono" id="admin-date"></div>
+                    </div>
+
+                    <div class="card">
+                        <!-- <div class="card-title">HOD Workload Converter</div> -->
+                        <!-- <div class="card-sub">Upload your HOD workload Excel and generate CS section-wise output.</div> -->
+                        <div class="iframe-wrapper">
+                            <iframe src="clone1.html" class="workload-iframe"></iframe>
+                        </div>
+                    </div>
+                </div>
+
+<!-- ------------------------------------------------------------------------------------------------------------------ -->
+
+
+
+
+
+
+
+                <!-- MANAGE ADMIN PANEL -->
+                <div class="panel" id="panel-manage-admin">
+                    <div class="main-head">
+                        <div>
+                            <h1>Manage Admin</h1>
+                            <p>Create additional admin accounts and manage access to the registrar console.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date-admin"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Add another admin</div>
+                        <div class="card-sub">New admins can sign in to the same console once their account is created.</div>
+                        <div class="success-msg" id="admin-add-success"></div>
+                        <div class="error-msg" id="admin-add-error"></div>
+                        <div class="field-row">
+                            <div class="field">
+                                <label>Full name</label>
+                                <input type="text" id="admin-name" placeholder="Registrar Officer">
+                            </div>
+                            <div class="field">
+                                <label>Email address</label>
+                                <input type="email" id="admin-email" placeholder="officer@prestige.edu">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label>Create password</label>
+                            <input type="password" id="admin-password" placeholder="||||||||">
+                        </div>
+                        <button class="btn btn-brass" onclick="handleAddAdmin()">Create admin account</button>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Existing admins</div>
+                        <div class="card-sub">Current registrar accounts with access to the admin console.</div>
+                        <div id="admin-list"></div>
+                    </div>
+                </div>
+
+                <!-- MANAGE FACULTY PANEL -->
+                <div class="panel" id="panel-manage">
+                    <div class="main-head">
+                        <div>
+                            <h1>Manage Faculty</h1>
+                            <p>Review registration requests and grant or deny login access.</p>
+                        </div>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            <button type="button" class="btn btn-secondary" onclick="refreshManageFaculty()" style="padding: 8px 16px; font-size: 13px;">Refresh Refresh</button>
+                            <div class="date-chip mono" id="admin-date2"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-row">
+                        <div class="stat pending">
+                            <div class="num" id="stat-a">0</div>
+                            <div class="lbl">Pending requests</div>
+                        </div>
+                        <div class="stat approved">
+                            <div class="num" id="stat-b">0</div>
+                            <div class="lbl">Approved faculty</div>
+                        </div>
+                        <div class="stat total">
+                            <div class="num" id="stat-c">0</div>
+                            <div class="lbl">Total registrations</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Pending requests</div>
+                        <div class="card-sub">Grant access to allow faculty to sign in immediately.</div>
+                        <div id="pending-list"></div>
+                    </div>
+
+
+
+
+                    <div class="card">
+                        <div class="card-title">All faculty</div>
+                        <div class="card-sub">Full record of approvals and rejections.</div>
+                        <div id="all-list"></div>
+                    </div>
+
+                    <div class="card" style="margin-top: 24px;">
+                        <div class="card-title">Bulk Invite Faculty</div>
+                        <div class="card-sub">Invite multiple faculty members at once via email.</div>
+                        
+                        <div class="field" style="margin-top: 16px;">
+                            <label>Email Addresses (one per line)</label>
+                            <textarea id="bulk-invite-emails" placeholder="email1@prestige.edu&#10;email2@prestige.edu&#10;email3@prestige.edu" style="width: 100%; height: 120px; padding: 12px; border: 1px solid var(--slate-20); border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; resize: vertical;"></textarea>
+                        </div>
+                        
+                        <div style="display: flex; gap: 8px; margin-top: 16px;">
+                            <button type="button" class="btn btn-primary" onclick="validateBulkEmails()">Validate & Preview</button>
+                            <button type="button" class="btn btn-secondary" onclick="document.getElementById('bulk-invite-emails').value = ''">Clear</button>
+                        </div>
+                        
+                        <div class="error-msg" id="bulk-invite-error"></div>
+                        <div class="success-msg" id="bulk-invite-success"></div>
+                        
+                        <!-- Preview of emails to be invited -->
+                        <div id="bulk-preview-container" style="display: none; margin-top: 20px; padding: 16px; background: var(--sky-bg); border-radius: 8px; border-left: 4px solid var(--sky);">
+                            <div style="font-size: 12px; font-weight: 600; color: var(--sky); margin-bottom: 12px; text-transform: uppercase;">Emails to Invite</div>
+                            <div id="bulk-preview-list" style="font-size: 13px; color: var(--ink); margin-bottom: 16px;"></div>
+                            <button type="button" class="btn btn-primary" onclick="sendBulkInvites()" style="width: 100%;">Send All Invites</button>
+                        </div>
+                        
+                        <!-- Invitation Status List -->
+                        <div style="margin-top: 20px;">
+                            <div style="font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 12px; text-transform: uppercase;">Invitation Status</div>
+                            <div id="invitations-status-list" style="font-size: 13px; color: var(--slate);"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel" id="panel-time-setting">
+                    <div class="main-head">
+                        <div>
+                            <h1>Time Setting</h1>
+                            <p>Configure time slots and scheduling windows for faculty workload entries.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date3"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Time setting</div>
+                        <div class="card-sub">Define the operational timetable window used by the workload planner.</div>
+
+                        <div class="field-row time-grid">
+                            <div class="field">
+                                <label>Start Time</label>
+                                <input type="time" id="time-setting-start" value="10:00">
+                            </div>
+                            <div class="field">
+                                <label>End Time</label>
+                                <input type="time" id="time-setting-end" value="17:00">
+                            </div>
+                        </div>
+
+                        <div class="field-row time-grid">
+                            <div class="field">
+                                <label>Duration (minutes)</label>
+                                <input type="number" id="time-setting-duration" value="50" min="30" max="120">
+                            </div>
+                            <div class="field">
+                                <label>Lab Duration (minutes)</label>
+                                <input type="number" id="time-setting-lab-duration" value="100" min="30" max="300" step="10">
+                            </div>
+                        </div>
+
+                        <div class="field-row time-grid">
+                            <div class="field">
+                                <label>Lunch Start</label>
+                                <input type="time" id="time-setting-lunch-start" value="13:20">
+                            </div>
+                            <div class="field">
+                                <label>Lunch End</label>
+                                <input type="time" id="time-setting-lunch-end" value="14:10">
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label>Current Semester</label>
+                                    <select id="time-setting-current-semester" onchange="loadTimeSettingCourseSettings(undefined, this.value)">
+                                <option value="semester1">Semester I</option>
+                                <option value="semester2">Semester II</option>
+                                <option value="semester3">Semester III</option>
+                                <option value="semester4">Semester IV</option>
+                                <option value="semester5">Semester V</option>
+                                <option value="semester6">Semester VI</option>
+                                <option value="semester7">Semester VII</option>
+                                <option value="semester8">Semester VIII</option>
+                            </select>
+                        </div>
+
+                        <div class="field">
+                            <label>Course</label>
+                            <select id="time-setting-course" onchange="loadTimeSettingCourseSettings(this.value)">
+                                <option value="B.Tech">B.Tech</option>
+                                <option value="M.Tech">M.Tech</option>
+                            </select>
+                        </div>
+
+                        <div class="field-row time-grid">
+                            <div class="field">
+                                <label>Starting Date</label>
+                                <input type="date" id="time-setting-start-date">
+                            </div>
+                            <div class="field">
+                                <label>Ending Date</label>
+                                <input type="date" id="time-setting-end-date">
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label>Working Days</label>
+                            <div class="inline-toggle-list" id="time-setting-working-days">
+                                <button type="button" class="day-toggle active" data-day="monday" onclick="toggleTimeSettingDay('monday'); return false;">Mon</button>
+                                <button type="button" class="day-toggle active" data-day="tuesday" onclick="toggleTimeSettingDay('tuesday'); return false;">Tue</button>
+                                <button type="button" class="day-toggle active" data-day="wednesday" onclick="toggleTimeSettingDay('wednesday'); return false;">Wed</button>
+                                <button type="button" class="day-toggle active" data-day="thursday" onclick="toggleTimeSettingDay('thursday'); return false;">Thu</button>
+                                <button type="button" class="day-toggle active" data-day="friday" onclick="toggleTimeSettingDay('friday'); return false;">Fri</button>
+                                <button type="button" class="day-toggle" data-day="saturday" onclick="toggleTimeSettingDay('saturday'); return false;">Sat</button>
+                                <button type="button" class="day-toggle" data-day="sunday" onclick="toggleTimeSettingDay('sunday'); return false;">Sun</button>
+                            </div>
+                            <div class="days-selected-count" id="time-setting-days-count">5 days selected</div>
+                        </div>
+
+                        <label class="checkbox-wrap">
+                            <input type="checkbox" id="time-setting-apply-all">
+                            <span>Apply to all semesters</span>
+                        </label>
+
+                        <div class="time-setting-actions">
+                            <button class="btn btn-primary btn-small" type="button" onclick="applyTimeSettingPanel()">Apply Settings</button>
+                            <button class="btn btn-ghost btn-small" type="button" onclick="resetTimeSettingPanel()">Reset</button>
+                        </div>
+                    </div>
+                </div>
+
+
+
+                <div class="panel" id="panel-add-faculty">
+                    <div class="main-head">
+                        <div>
+                            <h1>Add Faculty</h1>
+                            <p>Register new faculty members directly from the admin console.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date4"></div>
+                    </div>
+                    <div class="card">
+
+                        <div id="teachersManagementSection" class="section-content section-content--open">
+                            <div class="field">
+                                <input type="text" id="teacherName" placeholder="Enter teacher name">
+                            </div>
+                            <button type="button" class="btn btn-primary" onclick="addTeacher()">Add Teacher</button>
+
+                            <div class="section--spaced">
+                                <input type="text" class="teacher-search" id="teacherSearch" placeholder="Search teachers..." oninput="filterTeachers()">
+                                <div id="teacherList" class="teacher-list"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel" id="panel-add-subject">
+                    <div class="main-head">
+                        <div>
+                            <h1>Add Subject</h1>
+                            <p>Define new subjects and course details for workload planning.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date5"></div>
+                    </div>
+
+                    <div class="card">
+                        <!-- <div class="card-sub">Upload subject and lab metadata from Excel or create entries manually.</div> -->
+
+                        <!-- <div class="card" style="margin-top:12px; padding:18px;">
+                            <span class="card-title__label">Subjects</span>
+                        </div> -->
+
+                        <div id="subjectsManagementSection" class="section-content section-content--open">
+                            <div class="field">
+                                <!-- Excel upload removed -->
+                                <!-- <p class="muted">Upload option removed. Create entries manually below.</p> -->
+                            </div>
+
+                            <div class="field">
+                                <input type="text" id="subjectName" placeholder="Enter subject name">
+                            </div>
+
+                            <div class="field-row time-grid">
+                                <div class="field">
+                                    <label>Course</label>
+                                    <select id="subjectCourse" onchange="renderSubjects(document.getElementById('subjectSearch')?.value || '')">
+                                        <option value="B.Tech">B.Tech</option>
+                                        <option value="M.Tech">M.Tech</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label>Semester</label>
+                                    <select id="subjectSemester" onchange="renderSubjects(document.getElementById('subjectSearch')?.value || '')">
+                                        <option value="semester1">Semester I</option>
+                                        <option value="semester2">Semester II</option>
+                                        <option value="semester3">Semester III</option>
+                                        <option value="semester4">Semester IV</option>
+                                        <option value="semester5">Semester V</option>
+                                        <option value="semester6">Semester VI</option>
+                                        <option value="semester7">Semester VII</option>
+                                        <option value="semester8">Semester VIII</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label>Category</label>
+                                    <select id="subjectCategory" onchange="toggleSubjectElectiveType()">
+                                        <option value="main">Main Subject</option>
+                                        <option value="elective">Elective Subject</option>
+                                    </select>
+                                </div>
+                                <div class="field" id="subjectElectiveTypeField">
+                                    <label>Elective Type</label>
+                                    <select id="subjectElectiveType">
+                                        <option value="program">Departmental Elective</option>
+                                        <option value="open">Open Elective</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <label class="checkbox-wrap">
+                                <input type="checkbox" id="isLab">
+                                <span>Is Lab (2-hour session)</span>
+                            </label>
+
+                            <div class="field-row time-grid">
+                                <button type="button" class="btn btn-primary" onclick="addSubject()">Add Subject</button>
+                            </div>
+
+                            <div class="section--spaced">
+                                <input type="text" class="search-box" id="subjectSearch" placeholder="Search subjects..." oninput="filterSubjects()">
+                                <div id="subjectList" class="list-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel" id="panel-dashboard">
+                    <div class="main-head">
+                        <div>
+                            <h1>Dashboard</h1>
+                            <p>Review key faculty and workload metrics at a glance.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date6"></div>
+                    </div>
+                    <div class="card">
+                        <div class="dashboard-timetable-shell">
+                            <div class="semester-selector">
+                                <button type="button" class="semester-btn active" data-semester="semester1" onclick="changeDashboardSemester('semester1')">Semester I</button>
+                                <button type="button" class="semester-btn" data-semester="semester2" onclick="changeDashboardSemester('semester2')">Semester II</button>
+                                <button type="button" class="semester-btn" data-semester="semester3" onclick="changeDashboardSemester('semester3')">Semester III</button>
+                                <button type="button" class="semester-btn" data-semester="semester4" onclick="changeDashboardSemester('semester4')">Semester IV</button>
+                                <button type="button" class="semester-btn" data-semester="semester5" onclick="changeDashboardSemester('semester5')">Semester V</button>
+                                <button type="button" class="semester-btn" data-semester="semester6" onclick="changeDashboardSemester('semester6')">Semester VI</button>
+                                <button type="button" class="semester-btn" data-semester="semester7" onclick="changeDashboardSemester('semester7')">Semester VII</button>
+                                <button type="button" class="semester-btn" data-semester="semester8" onclick="changeDashboardSemester('semester8')">Semester VIII</button>
+                            </div>
+
+                            <div class="section-selector">
+                                <button type="button" class="section-btn active-a" data-section="sectionA" onclick="changeDashboardSection('sectionA')">Section A</button>
+                                <button type="button" class="section-btn" data-section="sectionB" onclick="changeDashboardSection('sectionB')">Section B</button>
+                                <button type="button" class="section-btn" data-section="sectionC" onclick="changeDashboardSection('sectionC')">Section C</button>
+                            </div>
+
+                            <div class="timetable-header">
+                                <div>
+                                    <h2 class="timetable-title" id="dashboardTimetableTitle">Timetable - Semester I - Section A</h2>
+                                    <div class="dashboard-meta-row" id="dashboardTimetableMeta">
+                                        <span class="dashboard-meta-text">Room: <strong id="dashboardRoomValue">No rooms assigned</strong></span>
+                                        <span class="dashboard-meta-text">Class Teacher: <strong id="dashboardClassTeacherValue">No class teacher assigned</strong></span>
+                                        <span class="dashboard-meta-text">Students: <strong id="dashboardStudentNumberValue">Not assigned</strong></span>
+                                        <span class="dashboard-meta-text">Semester Dates: <strong id="dashboardSemesterDateValue">Not assigned</strong></span>
+                                        <span class="dashboard-meta-text">Academic Session: <strong id="dashboardAcademicSessionValue">2025-2026</strong></span>
+                                    </div>
+                                </div>
+                                <div class="timetable-actions">
+                                    <label style="margin-right:10px; display:flex; align-items:center; gap:6px;">
+                                        Course
+                                        <select id="dashboardCourse" onchange="setDashboardCourse(this.value)" style="padding:4px 8px; border-radius:4px; border:1px solid #cbd5e1;">
+                                            <option value="B.Tech">B.Tech</option>
+                                            <option value="M.Tech">M.Tech</option>
+                                        </select>
+                                    </label>
+                                    <input type="file" id="dashboardExcelFileInput" accept=".xlsx,.xls" style="display:none" onchange="uploadDashboardTimetableFromExcel()">
+                                    <button type="button" class="btn--purple btn-small" onclick="uploadDashboardTimetableFromExcel()">ðŸ“¥ Upload Excel</button>
+                                    <button type="button" class="btn-danger btn-small" onclick="clearDashboardTimetable()">ðŸ—‘ï¸ Clear Current</button>
+                                    <!-- Upload Students button removed -->
+                                    <button type="button" class="btn--green btn-small" onclick="alert('View Student List')">ðŸ‘¥ View Student List</button>
+                                    <button type="button" class="btn-secondary btn-small" onclick="printDashboardTimetable()">ðŸ–¨ï¸ Print</button>
+                                </div>
+                            </div>
+
+                            <div class="dashboard-timetable-grid">
+                                <table class="dashboard-timetable-table" id="dashboardTimetableTable">
+                                    <thead id="dashboardTimetableHead">
+                                        <!-- Populated dynamically by renderDashboardTimetable() -->
+                                    </thead>
+                                    <tbody id="dashboardTimetableBody"></tbody>
+                                </table>
+                            </div>
+                            <div class="card" id="dashboardSubjectSummaryCard" style="margin-top:16px;">
+                                <div class="card-title">Subject Summary</div>
+                                <div class="card-sub">Aggregated subjects and counts for the current semester & section.</div>
+                                <div id="dashboardSubjectSummary" style="margin-top:12px; overflow:auto;"></div>
+                                <div style="margin-top:12px; display:flex; gap:8px;">
+                                    <button type="button" class="btn btn-secondary btn-small" onclick="renderDashboardSubjectSummary()">Refresh Summary</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="dashboardEditModalBackdrop" class="modal-backdrop" onclick="closeDashboardEditModal(event)">
+                    <div class="edit-modal" onclick="event.stopPropagation()">
+                        <h3>Edit Time Slot</h3>
+                        <p>Update the selected slot details for this dashboard timetable.</p>
+                        <div class="modal-row">
+                            <label for="editSlotSubject">Subject</label>
+                            <select id="editSlotSubject" style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);">
+                                <option value="">(Select subject)</option>
+                            </select>
+                        </div>
+                        <div class="modal-row">
+                            <label for="editSlotTeacher">Teacher</label>
+                            <select id="editSlotTeacher" style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);">
+                                <option value="">(Select teacher)</option>
+                            </select>
+                        </div>
+                        <div class="modal-row">
+                            <label for="editSlotRoom">Room Number</label>
+                            <input id="editSlotRoom" type="text" placeholder="Enter room number">
+                        </div>
+                        <div class="modal-row">
+                            <label for="editSlotClassTeacher">Class Teacher</label>
+                            <input id="editSlotClassTeacher" type="text" placeholder="Enter class teacher">
+                        </div>
+                        <div class="modal-row">
+                            <label for="editSlotStudentNumber">Student Number</label>
+                            <input id="editSlotStudentNumber" type="text" placeholder="Enter student count">
+                        </div>
+                        <div class="modal-row">
+                            <label for="editSlotAcademicSession">Academic Session</label>
+                            <input id="editSlotAcademicSession" type="text" placeholder="2025-2026">
+                        </div>
+                        <div class="modal-actions">
+                            <div class="left-actions">
+                                <button type="button" class="btn-cancel" onclick="closeDashboardEditModal(event)">Cancel</button>
+                                <button type="button" class="btn-danger" onclick="deleteDashboardSlot()">Delete</button>
+                            </div>
+                            <div class="right-actions">
+                                <button type="button" class="btn btn-primary" onclick="saveDashboardSlot()">Update</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel" id="panel-view-history">
+                    <div class="main-head">
+                        <div>
+                            <h1>View History</h1>
+                            <p>Browse cleared timetable history and restore archived schedules.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date7"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Cleared Timetable History</div>
+                        <div class="card-sub">Click an archived timetable entry below to restore it to the main view.</div>
+                        <div id="historyPanelContainer" class="admin-only" style="display:block; margin-top:12px; padding:12px; border:1px solid #ddd; border-radius:8px; background:#fafafa; max-width:100%;">
+                            <h3 style="margin:0 0 8px; font-size:1rem;">Cleared Timetable History</h3>
+                            <p id="historyCountText" style="margin:0 0 10px; color:#4b5563; font-size:0.92rem;">Click any entry below to preview it, then restore from the preview panel.</p>
+                            <div id="historyPanel" style="display:grid; gap:10px; color:#111; font-size:0.95rem;">
+                                <p style="margin:0; color:#555;">No cleared timetables have been archived yet.</p>
+                            </div>
+                            <div id="historyPreviewContainer" style="display:none; margin-top:16px; padding:12px; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc;">
+                                <h4 style="margin:0 0 8px; font-size:1rem;">Selected Timetable Preview</h4>
+                                <div id="historyPreviewContent" style="margin-bottom:12px; color:#111; font-size:0.95rem;">Select a cleared timetable above to preview it here.</div>
+                                <button type="button" id="restoreHistoryButton" class="btn btn-primary btn-small" onclick="restoreSelectedDashboardHistoryEntry()" disabled>Restore Selected Timetable</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel" id="panel-see-workload">
+                    <div class="main-head">
+                        <div>
+                            <h1>See Workload</h1>
+                            <p>Inspect faculty workload assignments and section allocations.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date8"></div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Workload overview</div>
+                        <div class="card-sub">This area displays workload assigned to each teacher from the current timetable.</div>
+                        <div id="workloadOverviewContent" style="margin-top:16px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================== FACULTY DASHBOARD =================== -->
+    <div class="screen" id="screen-faculty">
+        <div class="dash">
+            <div class="sidebar">
+                <div class="brand-mark">
+                    <div class="brand-crest">M</div>
+                    <div class="brand-name">Prestige Institute<span>Faculty Portal</span></div>
+                </div>
+                <div class="side-label">Menu</div>
+                <div class="side-item active" id="faculty-nav-profile" onclick="setFacultySection('profile')">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="3.5" y="4" width="17" height="16" rx="2" />
+                        <path d="M3.5 9h17" />
+                    </svg>
+                    My Profile
+                </div>
+                <div class="side-item" id="faculty-nav-dashboard" onclick="setFacultySection('dashboard')">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M4 5h16v14H4z" />
+                        <path d="M8 9h8" />
+                        <path d="M8 13h5" />
+                    </svg>
+                    See Dashboard
+                </div>
+                <div class="sidebar-foot">
+                    <div class="who" id="fac-side-name">Faculty</div>
+                    <div id="fac-side-email">-</div>
+                    <a class="logout-link" onclick="logout()">Sign out</a>
+                </div>
+            </div>
+            <div class="main">
+                <div class="main-head">
+                    <div>
+                        <h1>Welcome back</h1>
+                        <p>Your faculty profile and access record.</p>
+                    </div>
+                    <div class="date-chip mono" id="fac-date"></div>
+                </div>
+
+                <div class="welcome-banner">
+                    <h2 id="fac-welcome-name">Welcome, Faculty</h2>
+                    <p>Your access was reviewed and granted by the admin office. You now have full faculty sign-in
+                        privileges at Prestige Institute.</p>
+                </div>
+
+                <div class="card" id="faculty-dashboard-section" style="display:none;">
+                    <div class="card-title">See Dashboard</div>
+                    <div class="card-sub">Read-only view of the timetable generated by the admin. You can view your assigned schedule, but you cannot make any changes.</div>
+                    <div class="dashboard-timetable-shell" style="margin-top:12px;">
+                        <div class="semester-selector">
+                            <button type="button" class="semester-btn active" data-semester="semester1" onclick="changeDashboardSemester('semester1'); renderFacultyTimetablePanel();">Semester I</button>
+                            <button type="button" class="semester-btn" data-semester="semester2" onclick="changeDashboardSemester('semester2'); renderFacultyTimetablePanel();">Semester II</button>
+                            <button type="button" class="semester-btn" data-semester="semester3" onclick="changeDashboardSemester('semester3'); renderFacultyTimetablePanel();">Semester III</button>
+                            <button type="button" class="semester-btn" data-semester="semester4" onclick="changeDashboardSemester('semester4'); renderFacultyTimetablePanel();">Semester IV</button>
+                            <button type="button" class="semester-btn" data-semester="semester5" onclick="changeDashboardSemester('semester5'); renderFacultyTimetablePanel();">Semester V</button>
+                            <button type="button" class="semester-btn" data-semester="semester6" onclick="changeDashboardSemester('semester6'); renderFacultyTimetablePanel();">Semester VI</button>
+                            <button type="button" class="semester-btn" data-semester="semester7" onclick="changeDashboardSemester('semester7'); renderFacultyTimetablePanel();">Semester VII</button>
+                            <button type="button" class="semester-btn" data-semester="semester8" onclick="changeDashboardSemester('semester8'); renderFacultyTimetablePanel();">Semester VIII</button>
+                        </div>
+
+                        <div class="section-selector">
+                            <button type="button" class="section-btn active-a" data-section="sectionA" onclick="changeDashboardSection('sectionA'); renderFacultyTimetablePanel();">Section A</button>
+                            <button type="button" class="section-btn" data-section="sectionB" onclick="changeDashboardSection('sectionB'); renderFacultyTimetablePanel();">Section B</button>
+                            <button type="button" class="section-btn" data-section="sectionC" onclick="changeDashboardSection('sectionC'); renderFacultyTimetablePanel();">Section C</button>
+                        </div>
+
+                        <div class="timetable-header">
+                            <div>
+                                <h2 class="timetable-title" id="facultyTimetableTitle">Timetable</h2>
+                                <div class="dashboard-meta-row" id="facultyTimetableMeta">
+                                    <span class="dashboard-meta-text">Room: <strong id="facultyRoomValue">No rooms assigned</strong></span>
+                                    <span class="dashboard-meta-text">Class Teacher: <strong id="facultyClassTeacherValue">No class teacher assigned</strong></span>
+                                    <span class="dashboard-meta-text">Students: <strong id="facultyStudentNumberValue">Not assigned</strong></span>
+                                    <span class="dashboard-meta-text">Semester Dates: <strong id="facultySemesterDateValue">Not assigned</strong></span>
+                                    <span class="dashboard-meta-text">Academic Session: <strong id="facultyAcademicSessionValue">2025-2026</strong></span>
+                                </div>
+                            </div>
+                            <div class="timetable-actions">
+                                <label style="margin-right:10px; display:flex; align-items:center; gap:6px;">
+                                    Course
+                                    <select id="facultyCourseSelect" onchange="setFacultyCourse(this.value); renderFacultyTimetablePanel();">
+                                        <option value="B.Tech">B.Tech</option>
+                                        <option value="M.Tech">M.Tech</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div id="facultyTimetablePanel" style="margin-top:16px;"></div>
+                    </div>
+                </div>
+
+                <div class="card" id="faculty-profile-section">
+                    <div class="card-title">Your profile</div>
+                    <div class="card-sub">Details on file with the registrar.</div>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="k">Full name</div>
+                            <div class="v" id="fac-name">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="k">Department</div>
+                            <div class="v" id="fac-dept">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="k">Employee ID</div>
+                            <div class="v" id="fac-empid">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="k">Email</div>
+                            <div class="v" id="fac-email">-</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="k">Status</div>
+                            <div class="v"><span class="status-pill approved">Approved</span></div>
+                        </div>
+                        <div class="info-item">
+                            <div class="k">Approved on</div>
+                            <div class="v" id="fac-approved-date">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="modules/app.js"></script>
+
+    <div id="teacherTimetableModal" class="modal-backdrop teacher-timetable-modal" onclick="closeTeacherTimetableModal()">
+        <div class="edit-modal" onclick="event.stopPropagation();" style="padding:28px;">
+            <div class="modal-header">
+                <div>
+                    <h2 class="modal-title">Teacher Timetable</h2>
+                    <div class="modal-subtitle">Review assignments by course, semester, section and time slot.</div>
+                </div>
+                <button class="btn btn-secondary btn-small" type="button" onclick="closeTeacherTimetableModal()">Close</button>
+            </div>
+            <div class="modal-content-scroll">
+                <div id="teacherTimetableModalContent"></div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
+
