@@ -192,6 +192,38 @@
             }
         }
 
+        async function loadDashboardHistoryFromApi() {
+            if (!apiToken || apiRole !== 'admin') return false;
+            try {
+                const payload = await apiRequest('/api/history');
+                dashboardTimetableHistory.length = 0;
+                (payload.history || []).forEach(entry => dashboardTimetableHistory.push(entry));
+                selectedDashboardHistoryEntryId = null;
+                renderDashboardHistoryPanel();
+                return true;
+            } catch (error) {
+                if (error.status === 401) setApiSession('', '');
+                console.warn('Timetable history was not loaded from MongoDB:', error);
+                return false;
+            }
+        }
+
+        async function saveDashboardHistoryToApi() {
+            if (!apiToken || apiRole !== 'admin') return false;
+            try {
+                const payload = await apiRequest('/api/history', {
+                    method: 'PUT',
+                    body: { history: dashboardTimetableHistory }
+                });
+                dashboardTimetableHistory.length = 0;
+                (payload.history || []).forEach(entry => dashboardTimetableHistory.push(entry));
+                return true;
+            } catch (error) {
+                console.warn('Timetable history was not saved to MongoDB:', error);
+                return false;
+            }
+        }
+
         let adminDB = [];
         let facultyDB = [];
         let inviteDB = [];
@@ -609,6 +641,7 @@ let nextId = 3;
                     await loadInvitesFromApi();
                     await loadTimeSettingsFromApi();
                     await loadSubjectsFromApi();
+                    await loadDashboardHistoryFromApi();
                     openAdmin();
                 } else {
                     await loadTimeSettingsFromApi();
@@ -2135,7 +2168,7 @@ let nextId = 3;
         // Styled conflict modal (used to show assignment conflicts)
         // Markup is appended near other modals; simple show/close helpers below.
 
-        function clearDashboardTimetable() {
+        async function clearDashboardTimetable() {
             const semester = dashboardTimetableState.currentSemester;
             const section = dashboardTimetableState.currentSection;
             const schedule = getDashboardTimetableData(dashboardCourse)[semester]?.[section];
@@ -2166,7 +2199,11 @@ let nextId = 3;
             renderDashboardHistoryPanel();
 
             if (archived) {
-                alert('Timetable cleared and archived in history. Open the history view to restore it.');
+                const savedToMongo = await saveDashboardHistoryToApi();
+                renderDashboardHistoryPanel();
+                alert(savedToMongo
+                    ? 'Timetable cleared and archived in MongoDB history. Open the history view to restore it.'
+                    : 'Timetable cleared and archived locally, but history was not saved to MongoDB.');
             } else {
                 alert('Timetable cleared. No data was archived because the timetable was already empty.');
             }

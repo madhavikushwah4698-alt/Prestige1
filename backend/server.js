@@ -30,7 +30,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
 const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
 const STATE_DOCUMENT_ID = 'prestige-state';
-const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects'];
+const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects', 'history'];
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -56,6 +56,7 @@ function loadSeedDb() {
     timetables: [],
     timeSettings: [],
     subjects: [],
+    history: [],
     meta: {
       nextAdminId: 1,
       nextFacultyId: 1,
@@ -143,6 +144,7 @@ function mongoDocumentIdFor(collectionName, item) {
       item.code || ''
     ].join('|').toLowerCase();
   }
+  if (collectionName === 'history') return item.id || crypto.randomUUID();
   return crypto.randomUUID();
 }
 
@@ -350,6 +352,25 @@ function sanitizeSubject(raw) {
     isLab: Boolean(raw.isLab),
     course,
     semester
+  };
+}
+
+function sanitizeHistoryEntry(raw) {
+  const id = String(raw.id || '').trim() || `dashboard-history-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const course = String(raw.course || '').trim();
+  const semester = String(raw.semester || '').trim();
+  const section = String(raw.section || '').trim();
+  if (!course || !semester || !section) return null;
+
+  return {
+    id,
+    course,
+    semester,
+    section,
+    timestamp: raw.timestamp ? String(raw.timestamp) : new Date().toISOString(),
+    entryCount: Number(raw.entryCount) || 0,
+    schedule: raw.schedule && typeof raw.schedule === 'object' ? raw.schedule : {},
+    slotData: raw.slotData && typeof raw.slotData === 'object' ? raw.slotData : {}
   };
 }
 
@@ -829,6 +850,40 @@ async function handleSubjects(req, res, pathname) {
   return notFound(res);
 }
 
+async function handleHistory(req, res, pathname) {
+  const db = await readDb();
+  const auth = requireAuth(req);
+  if (!auth) return send(res, 401, { error: 'Login required' });
+
+  if (routeKey(req.method, pathname) === 'GET /api/history') {
+    return send(res, 200, { history: db.history || [] });
+  }
+
+  if (routeKey(req.method, pathname) === 'PUT /api/history') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    const incoming = Array.isArray(body.history) ? body.history : [];
+    const seen = new Set();
+    const history = incoming.map(sanitizeHistoryEntry).filter((entry) => {
+      if (!entry || seen.has(entry.id)) return false;
+      seen.add(entry.id);
+      return true;
+    });
+
+    db.history = history
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 20)
+      .map(entry => ({
+        ...entry,
+        updatedAt: new Date().toISOString()
+      }));
+    await writeDb(db);
+    return send(res, 200, { history: db.history });
+  }
+
+  return notFound(res);
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -851,6 +906,7 @@ async function handleRequest(req, res) {
     if (pathname.startsWith('/api/timetables')) return handleTimetables(req, res, pathname);
     if (pathname.startsWith('/api/time-settings')) return handleTimeSettings(req, res, pathname);
     if (pathname.startsWith('/api/subjects')) return handleSubjects(req, res, pathname);
+    if (pathname.startsWith('/api/history')) return handleHistory(req, res, pathname);
     if (serveStatic(req, res, pathname)) return;
     return notFound(res);
   } catch (error) {
