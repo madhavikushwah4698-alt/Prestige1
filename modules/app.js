@@ -224,6 +224,71 @@
             }
         }
 
+        function applyDashboardTimetableRecord(record) {
+            if (!record || record.id !== 'dashboard-state') return false;
+            const dataByCourse = record.dataByCourse || {};
+            const slotDataByCourse = record.slotDataByCourse || {};
+
+            Object.keys(dataByCourse).forEach(course => {
+                ensureDashboardCourseExists(course);
+                dashboardTimetableDataByCourse[course] = dataByCourse[course] || createEmptyDashboardCourseData();
+            });
+
+            Object.keys(slotDataByCourse).forEach(course => {
+                ensureDashboardCourseExists(course);
+                dashboardTimetableSlotDataByCourse[course] = slotDataByCourse[course] || {};
+            });
+
+            return true;
+        }
+
+        async function loadDashboardTimetablesFromApi() {
+            if (!apiToken) return false;
+            try {
+                const payload = await apiRequest('/api/timetables');
+                const record = (payload.timetables || []).find(item => item.id === 'dashboard-state');
+                if (applyDashboardTimetableRecord(record)) {
+                    try { renderDashboardTimetable(); } catch (e) { /* ignore */ }
+                    try { renderFacultyPersonalSchedulePanel(); } catch (e) { /* ignore */ }
+                }
+                return true;
+            } catch (error) {
+                if (error.status === 401) setApiSession('', '');
+                console.warn('Timetables were not loaded from MongoDB:', error);
+                return false;
+            }
+        }
+
+        async function saveDashboardTimetablesToApi() {
+            if (!apiToken || apiRole !== 'admin') return false;
+            try {
+                await apiRequest('/api/timetables', {
+                    method: 'PUT',
+                    body: {
+                        timetables: [{
+                            id: 'dashboard-state',
+                            dataByCourse: dashboardTimetableDataByCourse,
+                            slotDataByCourse: dashboardTimetableSlotDataByCourse
+                        }]
+                    }
+                });
+                return true;
+            } catch (error) {
+                console.warn('Timetables were not saved to MongoDB:', error);
+                return false;
+            }
+        }
+
+        let dashboardTimetableSaveTimer = null;
+
+        function queueDashboardTimetableSave() {
+            if (!apiToken || apiRole !== 'admin') return;
+            clearTimeout(dashboardTimetableSaveTimer);
+            dashboardTimetableSaveTimer = setTimeout(() => {
+                saveDashboardTimetablesToApi();
+            }, 500);
+        }
+
         async function saveTeacherViewToApi(viewData) {
             if (!apiToken || apiRole !== 'admin') return false;
             try {
@@ -656,11 +721,13 @@ let nextId = 3;
                     await loadInvitesFromApi();
                     await loadTimeSettingsFromApi();
                     await loadSubjectsFromApi();
+                    await loadDashboardTimetablesFromApi();
                     await loadDashboardHistoryFromApi();
                     openAdmin();
                 } else {
                     await loadTimeSettingsFromApi();
                     await loadSubjectsFromApi();
+                    await loadDashboardTimetablesFromApi();
                     openFaculty(result.user);
                 }
                 return;
@@ -2155,6 +2222,8 @@ let nextId = 3;
                             };
                             slotDataStore[slotKey1] = slotInfo;
                             slotDataStore[slotKey2] = slotInfo;
+                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
+                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
                             if (!teacherSchedule[req.teacher]) teacherSchedule[req.teacher] = {};
                             teacherSchedule[req.teacher][teacherKey1] = true;
                             teacherSchedule[req.teacher][teacherKey2] = true;
@@ -2178,6 +2247,7 @@ let nextId = 3;
                                 academicSession: '',
                                 classType: req.classType
                             };
+                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
                             if (!teacherSchedule[req.teacher]) teacherSchedule[req.teacher] = {};
                             teacherSchedule[req.teacher][teacherKey] = true;
                             assignedThisReq += 1;
@@ -2807,6 +2877,31 @@ let nextId = 3;
             return dashboardTimetableSlotDataByCourse[course];
         }
 
+        function setDashboardScheduleCellValue(course, semester, section, day, slotIndex, value) {
+            const courseData = getDashboardTimetableData(course);
+            const sectionSchedule = courseData[semester]?.[section];
+            if (!sectionSchedule) return;
+
+            const periodTimes = getDashboardPeriodTimes(course, semester);
+            if (!sectionSchedule[day]) {
+                sectionSchedule[day] = periodTimes.map(time => time === 'Lunch' ? 'Lunch' : '-');
+            }
+
+            if (sectionSchedule[day][slotIndex] === 'Lunch') return;
+            sectionSchedule[day][slotIndex] = value || '-';
+        }
+
+        function hasDashboardAssignmentsForView(course, semester, section, schedule, days) {
+            const hasScheduleCells = days.some(day => (schedule[day] || []).some(value => value && value !== '-' && value !== 'Lunch'));
+            if (hasScheduleCells) return true;
+
+            const slotDataStore = getDashboardTimetableSlotData(course);
+            return Object.keys(slotDataStore).some((key) => {
+                if (!key.startsWith(`${semester}|${section}|`)) return false;
+                return Boolean(slotDataStore[key]?.subject);
+            });
+        }
+
         function changeDashboardSemester(semester) {
             dashboardTimetableState.currentSemester = semester;
             document.querySelectorAll('.semester-selector .semester-btn').forEach((btn) => {
@@ -2911,6 +3006,7 @@ let nextId = 3;
             if (document.getElementById('faculty-schedule-section')?.style.display !== 'none') {
                 try { renderFacultyPersonalSchedulePanel(); } catch (e) { /* ignore */ }
             }
+            queueDashboardTimetableSave();
         }
 
         function setFacultyCourse(course) {
@@ -3108,7 +3204,7 @@ let nextId = 3;
                 return;
             }
 
-            const hasAnySchedule = days.some(day => (schedule[day] || []).some(value => value && value !== '-' && value !== '-'));
+            const hasAnySchedule = hasDashboardAssignmentsForView(course, semester, section, schedule, days);
             if (!hasAnySchedule) {
                 panel.innerHTML = '<div class="empty-note">The admin has not generated a timetable for this view yet.</div>';
                 return;
@@ -3372,6 +3468,7 @@ let nextId = 3;
                 const oldContinuation = slotDataStore[oldContinuationKey];
                 if (oldContinuation && oldContinuation.subject === currentSlotData.subject && oldContinuation.teacher === currentSlotData.teacher) {
                     delete slotDataStore[oldContinuationKey];
+                    setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, slotIndex + 1, '-');
                 }
             }
 
@@ -3400,10 +3497,13 @@ let nextId = 3;
             };
 
             slotDataStore[key] = slotInfo;
+            setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, slotIndex, subject);
             if (isLab) {
                 slotDataStore[nextSlotKey] = slotInfo;
+                setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, nextSlotIndex, subject);
             } else if (nextSlotData && /lab/i.test(nextSlotData.classType || nextSlotData.subject || '')) {
                 delete slotDataStore[nextSlotKey];
+                setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, nextSlotIndex, '-');
             }
 
             closeDashboardEditModal();
@@ -3439,6 +3539,7 @@ let nextId = 3;
                     const sameClassType = (s.classType || '') === (slotData.classType || '');
                     if (sameSubject && sameTeacher && sameClassType) {
                         delete slotDataStore[k];
+                        setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, j, '-');
                         j += 1;
                         continue;
                     }
@@ -3446,6 +3547,7 @@ let nextId = 3;
                 }
             } else {
                 delete slotDataStore[key];
+                setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, slotIndex, '-');
             }
 
             closeDashboardEditModal();

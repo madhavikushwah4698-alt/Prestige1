@@ -763,6 +763,17 @@ async function handleTimetables(req, res, pathname) {
     return send(res, 200, { timetables: db.timetables });
   }
 
+  if (routeKey(req.method, pathname) === 'PUT /api/timetables') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    db.timetables = Array.isArray(body.timetables) ? body.timetables.map(item => ({
+      ...item,
+      updatedAt: new Date().toISOString()
+    })) : [];
+    await writeDb(db);
+    return send(res, 200, { timetables: db.timetables });
+  }
+
   if (routeKey(req.method, pathname) === 'POST /api/timetables') {
     if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
     const body = await parseBody(req);
