@@ -785,6 +785,13 @@
                     </svg>
                     See Dashboard
                 </div>
+                <div class="side-item" id="faculty-nav-schedule" onclick="setFacultySection('schedule')">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <rect x="4" y="5" width="16" height="15" rx="2" />
+                        <path d="M8 3v4M16 3v4M4 10h16" />
+                    </svg>
+                    My Schedule
+                </div>
                 <div class="sidebar-foot">
                     <div class="who" id="fac-side-name">Faculty</div>
                     <div id="fac-side-email">-</div>
@@ -882,6 +889,24 @@
                             <div class="v" id="fac-approved-date">-</div>
                         </div>
                     </div>
+                </div>
+
+                <div class="card" id="faculty-schedule-section" style="display:none;">
+                    <div class="card-title">My Schedule</div>
+                    <div class="card-sub">Your assigned timetable slots from the admin schedule.</div>
+                    <div class="timetable-header" style="margin-top:12px;">
+                        <div>
+                            <h2 class="timetable-title" id="facultyPersonalScheduleTitle">My Schedule</h2>
+                            <div class="dashboard-meta-row">
+                                <span class="dashboard-meta-text">Room: <strong id="facultyPersonalRoomValue">No rooms assigned</strong></span>
+                                <span class="dashboard-meta-text">Class Teacher: <strong id="facultyPersonalClassTeacherValue">No class teacher assigned</strong></span>
+                                <span class="dashboard-meta-text">Students: <strong id="facultyPersonalStudentNumberValue">Not assigned</strong></span>
+                                <span class="dashboard-meta-text">Semester Dates: <strong id="facultyPersonalSemesterDateValue">Not assigned</strong></span>
+                                <span class="dashboard-meta-text">Academic Session: <strong id="facultyPersonalAcademicSessionValue">2025-2026</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="facultyPersonalSchedulePanel" style="margin-top:16px;"></div>
                 </div>
             </div>
         </div>

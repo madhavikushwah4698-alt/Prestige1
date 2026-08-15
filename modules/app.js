@@ -245,6 +245,7 @@
 let nextId = 3;
         let loginRole = "faculty";
         let currentFacultyId = null;
+        let currentFaculty = null;
         let currentInviteCode = null;
         let lastPendingCount = 0;
         let lastSeenPendingFaculty = [];
@@ -986,7 +987,10 @@ let nextId = 3;
                 try {
                     await apiRequest(`/api/faculty/${id}`, { method: 'DELETE' });
                     facultyDB = facultyDB.filter(f => f.id !== id);
-                    if (currentFacultyId === id) currentFacultyId = null;
+                    if (currentFacultyId === id) {
+                        currentFacultyId = null;
+                        currentFaculty = null;
+                    }
                     await renderManageFaculty();
                     await renderInvitationsStatus();
                     return;
@@ -2904,6 +2908,9 @@ let nextId = 3;
             // Refresh subject summary whenever timetable is rendered
             try { renderDashboardSubjectSummary(); } catch (e) { /* ignore */ }
             try { renderFacultyTimetablePanel(); } catch (e) { /* ignore */ }
+            if (document.getElementById('faculty-schedule-section')?.style.display !== 'none') {
+                try { renderFacultyPersonalSchedulePanel(); } catch (e) { /* ignore */ }
+            }
         }
 
         function setFacultyCourse(course) {
@@ -2911,6 +2918,148 @@ let nextId = 3;
             const select = document.getElementById('facultyCourseSelect');
             if (select) select.value = course;
             renderFacultyTimetablePanel();
+        }
+
+        function renderFacultyPersonalSchedulePanel() {
+            const panel = document.getElementById('facultyPersonalSchedulePanel');
+            const title = document.getElementById('facultyPersonalScheduleTitle');
+            const roomEl = document.getElementById('facultyPersonalRoomValue');
+            const teacherEl = document.getElementById('facultyPersonalClassTeacherValue');
+            const studentsEl = document.getElementById('facultyPersonalStudentNumberValue');
+            const sessionEl = document.getElementById('facultyPersonalAcademicSessionValue');
+            const dateRangeEl = document.getElementById('facultyPersonalSemesterDateValue');
+            if (!panel) return;
+
+            const faculty = currentFaculty || facultyDB.find(item => item.id === currentFacultyId);
+            const teacherName = faculty?.name || '';
+            const normalizedTeacher = normalizeTeacherName(teacherName);
+
+            if (title) {
+                title.textContent = teacherName ? `My Schedule - ${teacherName}` : 'My Schedule';
+            }
+
+            if (!normalizedTeacher) {
+                panel.innerHTML = '<div class="empty-note">Faculty profile was not loaded.</div>';
+                return;
+            }
+
+            const meta = { room: '', classTeacher: '', studentNumber: '', academicSession: '', dateRange: '' };
+            const courseTables = [];
+
+            Object.keys(dashboardTimetableDataByCourse).forEach(course => {
+                const slotStore = getDashboardTimetableSlotData(course);
+                const courseData = getDashboardTimetableData(course);
+                const semesters = Object.keys(courseData);
+                if (!semesters.length) return;
+
+                const headerSemester = semesters[0];
+                const days = getDashboardWorkingDays(course, headerSemester);
+                const periodTimes = getDashboardPeriodTimes(course, headerSemester);
+                const periodCount = periodTimes.length;
+                const cells = {};
+                days.forEach(day => {
+                    cells[day] = Array.from({ length: periodCount }, () => []);
+                });
+                let found = false;
+
+                semesters.forEach(semester => {
+                    Object.keys(courseData[semester] || {}).forEach(section => {
+                        days.forEach(day => {
+                            for (let index = 0; index < periodCount; index += 1) {
+                                const key = `${semester}|${section}|${day}|${index}`;
+                                const slot = slotStore[key];
+                                if (!slot || normalizeTeacherName(slot.teacher) !== normalizedTeacher) continue;
+
+                                if (!meta.room && slot.room) meta.room = slot.room;
+                                if (!meta.classTeacher && slot.classTeacher) meta.classTeacher = slot.classTeacher;
+                                if (!meta.studentNumber && slot.studentNumber) meta.studentNumber = slot.studentNumber;
+                                if (!meta.academicSession && slot.academicSession) meta.academicSession = slot.academicSession;
+                                if (!meta.dateRange) meta.dateRange = getDashboardSemesterDateRange(course, semester);
+
+                                cells[day][index].push({ ...slot, semester, section });
+                                found = true;
+                            }
+                        });
+                    });
+                });
+
+                if (found) {
+                    courseTables.push({ course, days, periodTimes, cells });
+                }
+            });
+
+            if (roomEl) roomEl.textContent = meta.room || 'No rooms assigned';
+            if (teacherEl) teacherEl.textContent = meta.classTeacher || teacherName || 'No class teacher assigned';
+            if (studentsEl) studentsEl.textContent = meta.studentNumber || 'Not assigned';
+            if (sessionEl) sessionEl.textContent = meta.academicSession || '2025-2026';
+            if (dateRangeEl) dateRangeEl.textContent = meta.dateRange || 'Not assigned';
+
+            if (!courseTables.length) {
+                panel.innerHTML = '<div class="empty-note">No timetable assignments found for you yet.</div>';
+                return;
+            }
+
+            panel.innerHTML = courseTables.map(table => `
+                <div style="margin-bottom:24px;">
+                    <div class="section-label">${escapeHtml(table.course)}</div>
+                    <div style="overflow-x:auto; background:#fff; border-radius:18px; padding:14px; box-shadow:inset 0 0 0 1px rgba(15, 23, 42, 0.05);">
+                        <table class="teacher-timetable-table" style="min-width:760px; margin-bottom:0;">
+                            <thead>
+                                <tr><th>Day / Time</th>${table.periodTimes.map(time => `<th>${escapeHtml(time)}</th>`).join('')}</tr>
+                            </thead>
+                            <tbody>
+                                ${table.days.map(day => {
+                                    const rowCells = table.cells[day];
+                                    let rowHtml = '';
+                                    for (let cellIndex = 0; cellIndex < rowCells.length; cellIndex += 1) {
+                                        const entries = rowCells[cellIndex];
+                                        if (!entries.length) {
+                                            rowHtml += '<td>-</td>';
+                                            continue;
+                                        }
+
+                                        const entry = entries[0];
+                                        const semesterLabel = semesterToRomanLabel(entry.semester);
+                                        const sectionLabel = entry.section.replace('section', 'Section ');
+                                        const roomLabel = entry.room ? `Room ${escapeHtml(entry.room)}` : 'Room not assigned';
+                                        const isLabCell = /lab/i.test(entry.classType || entry.subject || '');
+                                        let colspan = '';
+
+                                        if (isLabCell && cellIndex + 1 < rowCells.length) {
+                                            const nextEntries = rowCells[cellIndex + 1];
+                                            if (nextEntries.length) {
+                                                const nextEntry = nextEntries[0];
+                                                const sameSlot = normalizeTeacherName(nextEntry.teacher) === normalizedTeacher
+                                                    && nextEntry.subject === entry.subject
+                                                    && nextEntry.section === entry.section
+                                                    && nextEntry.semester === entry.semester
+                                                    && /lab/i.test(nextEntry.classType || nextEntry.subject || '');
+                                                if (sameSlot) colspan = ' colspan="2"';
+                                            }
+                                        }
+
+                                        rowHtml += `
+                                            <td class="filled${isLabCell ? ' lab-session' : ''}"${colspan}>
+                                                <div class="slot-block">
+                                                    <strong>${escapeHtml(entry.subject || '')}</strong>
+                                                    <div class="slot-meta">
+                                                        <span>${escapeHtml(entry.classType || 'Lecture')}</span>
+                                                        <span>${escapeHtml(semesterLabel)}</span>
+                                                        <span>${escapeHtml(sectionLabel)}</span>
+                                                        <span>${roomLabel}</span>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        `;
+                                        if (colspan) cellIndex += 1;
+                                    }
+                                    return `<tr><th>${escapeHtml(day)}</th>${rowHtml}</tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `).join('');
         }
 
         function renderFacultyTimetablePanel() {
@@ -3627,27 +3776,30 @@ let nextId = 3;
         function setFacultySection(section) {
             const profileSection = document.getElementById('faculty-profile-section');
             const dashboardSection = document.getElementById('faculty-dashboard-section');
+            const scheduleSection = document.getElementById('faculty-schedule-section');
             const profileNav = document.getElementById('faculty-nav-profile');
             const dashboardNav = document.getElementById('faculty-nav-dashboard');
+            const scheduleNav = document.getElementById('faculty-nav-schedule');
 
-            if (profileSection && dashboardSection) {
-                const showProfile = section === 'profile';
-                profileSection.style.display = showProfile ? '' : 'none';
-                dashboardSection.style.display = showProfile ? 'none' : '';
-            }
+            if (profileSection) profileSection.style.display = section === 'profile' ? '' : 'none';
+            if (dashboardSection) dashboardSection.style.display = section === 'dashboard' ? '' : 'none';
+            if (scheduleSection) scheduleSection.style.display = section === 'schedule' ? '' : 'none';
 
-            if (profileNav && dashboardNav) {
-                profileNav.classList.toggle('active', section === 'profile');
-                dashboardNav.classList.toggle('active', section === 'dashboard');
-            }
+            if (profileNav) profileNav.classList.toggle('active', section === 'profile');
+            if (dashboardNav) dashboardNav.classList.toggle('active', section === 'dashboard');
+            if (scheduleNav) scheduleNav.classList.toggle('active', section === 'schedule');
 
             if (section === 'dashboard') {
                 try { renderFacultyTimetablePanel(); } catch (e) { /* ignore */ }
+            }
+            if (section === 'schedule') {
+                try { renderFacultyPersonalSchedulePanel(); } catch (e) { /* ignore */ }
             }
         }
 
         function openFaculty(f) {
             currentFacultyId = f.id;
+            currentFaculty = f;
             showScreen("faculty");
             document.getElementById("fac-side-name").textContent = f.name;
             document.getElementById("fac-side-email").textContent = f.email;
@@ -3663,6 +3815,7 @@ let nextId = 3;
 
         function logout() {
             currentFacultyId = null;
+            currentFaculty = null;
             setApiSession('', '');
             document.getElementById("login-email").value = "";
             document.getElementById("login-password").value = "";
