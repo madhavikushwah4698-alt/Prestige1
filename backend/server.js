@@ -29,6 +29,9 @@ const GMAIL_APP_PASSWORD = String(process.env.GMAIL_APP_PASSWORD || '').replace(
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
 const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
+const DEMO_ADMIN_EMAIL = normalizeEmail(process.env.DEMO_ADMIN_EMAIL || 'admin@prestige.edu');
+const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || 'Admin@123';
+const DEMO_ADMIN_NAME = process.env.DEMO_ADMIN_NAME || 'Registrar Admin';
 const STATE_DOCUMENT_ID = 'prestige-state';
 const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects', 'history', 'teacherViews'];
 
@@ -83,6 +86,8 @@ async function connectDb() {
       const legacyState = await mongoDb.collection(MONGODB_STATE_COLLECTION).findOne({ _id: STATE_DOCUMENT_ID });
       await writeDb(legacyState?.state || loadSeedDb());
     }
+
+    await ensureDemoAdmin();
   })();
 
   try {
@@ -124,6 +129,66 @@ async function hasDocumentData() {
     if (await collections[name].findOne({})) return true;
   }
   return Boolean(await metaCollection.findOne({ _id: 'counters' }));
+}
+
+async function ensureDemoAdmin() {
+  if (!DEMO_ADMIN_EMAIL || !DEMO_ADMIN_PASSWORD) return;
+
+  await ensureMetaCounters();
+
+  const existingAdmin = await collections.admins.findOne({ email: DEMO_ADMIN_EMAIL });
+  if (existingAdmin) {
+    const passwordMatches = verifyPassword(DEMO_ADMIN_PASSWORD, existingAdmin.passwordHash);
+    if (!passwordMatches || existingAdmin.name !== DEMO_ADMIN_NAME) {
+      await collections.admins.updateOne(
+        { _id: existingAdmin._id },
+        {
+          $set: {
+            name: DEMO_ADMIN_NAME,
+            email: DEMO_ADMIN_EMAIL,
+            passwordHash: passwordMatches ? existingAdmin.passwordHash : hashPassword(DEMO_ADMIN_PASSWORD),
+            updatedAt: new Date().toISOString()
+          }
+        }
+      );
+    }
+    return;
+  }
+
+  const metaDocument = await metaCollection.findOne({ _id: 'counters' }, { projection: { _id: 0 } });
+  const highestAdmin = await collections.admins.find({ id: { $type: 'number' } }).sort({ id: -1 }).limit(1).next();
+  const nextAdminId = Math.max(Number(metaDocument?.nextAdminId) || 1, Number(highestAdmin?.id || 0) + 1);
+
+  await collections.admins.insertOne({
+    _id: nextAdminId,
+    id: nextAdminId,
+    name: DEMO_ADMIN_NAME,
+    email: DEMO_ADMIN_EMAIL,
+    passwordHash: hashPassword(DEMO_ADMIN_PASSWORD),
+    createdAt: new Date().toISOString()
+  });
+
+  await metaCollection.updateOne(
+    { _id: 'counters' },
+    { $max: { nextAdminId: nextAdminId + 1 } },
+    { upsert: true }
+  );
+}
+
+async function ensureMetaCounters() {
+  const db = await readDb();
+  await metaCollection.updateOne(
+    { _id: 'counters' },
+    {
+      $set: {
+        nextAdminId: Math.max(Number(db.meta?.nextAdminId) || 1, buildMetaFromData(db).nextAdminId),
+        nextFacultyId: Math.max(Number(db.meta?.nextFacultyId) || 1, buildMetaFromData(db).nextFacultyId),
+        nextInviteId: Math.max(Number(db.meta?.nextInviteId) || 1, buildMetaFromData(db).nextInviteId),
+        nextTimetableId: Math.max(Number(db.meta?.nextTimetableId) || 1, buildMetaFromData(db).nextTimetableId)
+      }
+    },
+    { upsert: true }
+  );
 }
 
 function stripMongoId(document) {

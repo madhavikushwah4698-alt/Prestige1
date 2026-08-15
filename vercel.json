@@ -1,31 +1,18 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "backend/server.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "claude_clone.html",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "modules/**",
-      "use": "@vercel/static"
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs20.x"
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "backend/server.js"
+      "source": "/api/:path*",
+      "destination": "/api/index.js"
     },
     {
-      "src": "/modules/(.*)",
-      "dest": "/modules/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "claude_clone.html"
+      "source": "/",
+      "destination": "/claude_clone.html"
     }
   ]
 }
