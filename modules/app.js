@@ -827,8 +827,16 @@ let nextId = 3;
             await loadTimeSettingsFromApi();
             renderManageFaculty();
             const dateStr = formatToday();
+            // Update all admin date chips
             document.getElementById("admin-date").textContent = dateStr;
+            document.getElementById("admin-date-admin").textContent = dateStr;
             document.getElementById("admin-date2").textContent = dateStr;
+            document.getElementById("admin-date3").textContent = dateStr;
+            document.getElementById("admin-date4").textContent = dateStr;
+            document.getElementById("admin-date5").textContent = dateStr;
+            document.getElementById("admin-date6").textContent = dateStr;
+            document.getElementById("admin-date7").textContent = dateStr;
+            document.getElementById("admin-date8").textContent = dateStr;
         }
 
         let manageFacultyRefreshInterval = null;
