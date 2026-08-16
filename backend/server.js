@@ -23,12 +23,27 @@ const PORT = Number(process.env.PORT || 4000);
 const TOKEN_SECRET = process.env.TOKEN_SECRET || 'change-this-secret-before-production';
 const SEED_DB_PATH = path.join(__dirname, 'data', 'db.json');
 const FRONTEND_ROOT = path.resolve(__dirname, '..');
-const APP_ORIGIN = process.env.APP_ORIGIN || 'http://localhost:4000';
+const isProductionRuntime = Boolean(process.env.NODE_ENV === 'production' || process.env.VERCEL || process.env.RENDER || process.env.NETLIFY || process.env.RAILWAY_ENVIRONMENT_NAME);
+
+function resolveMongoConfig(env = process.env) {
+  const providedMongoUri = String(env.MONGODB_URI || '').trim();
+  const mongoUri = providedMongoUri || (!isProductionRuntime ? 'mongodb://127.0.0.1:27017' : null);
+
+  if (!mongoUri) {
+    throw new Error('MONGODB_URI is required in production deployments. Set it to your MongoDB Atlas or MongoDB connection string.');
+  }
+
+  return {
+    APP_ORIGIN: env.APP_ORIGIN || (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : 'http://localhost:4000'),
+    MONGODB_URI: mongoUri,
+    MONGODB_DB: env.MONGODB_DB || 'prestige_access_portal',
+    MONGODB_STATE_COLLECTION: env.MONGODB_STATE_COLLECTION || 'app_state'
+  };
+}
+
+const { APP_ORIGIN, MONGODB_URI, MONGODB_DB, MONGODB_STATE_COLLECTION } = resolveMongoConfig(process.env);
 const GMAIL_USER = String(process.env.GMAIL_USER || '').trim();
 const GMAIL_APP_PASSWORD = String(process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '');
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
-const MONGODB_DB = process.env.MONGODB_DB || 'prestige_access_portal';
-const MONGODB_STATE_COLLECTION = process.env.MONGODB_STATE_COLLECTION || 'app_state';
 const DEMO_ADMIN_EMAIL = normalizeEmail(process.env.DEMO_ADMIN_EMAIL || 'admin@prestige.edu');
 const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || 'Admin@123';
 const DEMO_ADMIN_NAME = process.env.DEMO_ADMIN_NAME || 'Registrar Admin';
@@ -1058,6 +1073,8 @@ async function handleRequest(req, res) {
 }
 
 async function start() {
+  await connectDb();
+
   const server = http.createServer(handleRequest);
 
   server.listen(PORT, () => {
@@ -1074,4 +1091,5 @@ if (require.main === module) {
 }
 
 module.exports = handleRequest;
+module.exports.resolveMongoConfig = resolveMongoConfig;
 

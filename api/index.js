@@ -1,1 +1,2 @@
-module.exports = require('../backend/server');
+const handler = require('../backend/server');
+module.exports = handler;
