@@ -414,7 +414,9 @@ function sanitizeSubject(raw) {
   if (!name) return null;
   const course = String(raw.course || 'B.Tech').trim() || 'B.Tech';
   const semester = String(raw.semester || 'semester1').trim() || 'semester1';
-  const category = String(raw.category || 'main').trim() === 'elective' ? 'elective' : 'main';
+  const validCategories = ['main', 'elective', 'placement'];
+  const categoryInput = String(raw.category || 'main').trim().toLowerCase();
+  const category = validCategories.includes(categoryInput) ? categoryInput : 'main';
   const electiveType = category === 'elective' && String(raw.electiveType || '').trim() === 'open' ? 'open' : 'program';
 
   return {

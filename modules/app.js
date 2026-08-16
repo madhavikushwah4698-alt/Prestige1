@@ -1530,19 +1530,22 @@ let nextId = 3;
                 elective: {
                     program: [],
                     open: []
-                }
+                },
+                placement: []
             };
 
             visible.forEach((item) => {
                 if ((item.category || 'main') === 'elective') {
                     const electiveKey = item.electiveType === 'open' ? 'open' : 'program';
                     groups.elective[electiveKey].push(item);
+                } else if ((item.category || 'main') === 'placement') {
+                    groups.placement.push(item);
                 } else {
                     groups.main.push(item);
                 }
             });
 
-            const hasAny = groups.main.length || groups.elective.program.length || groups.elective.open.length;
+            const hasAny = groups.main.length || groups.elective.program.length || groups.elective.open.length || groups.placement.length;
             if (!hasAny) {
                 list.innerHTML = '<div class="subject-empty">No subjects for this semester and course yet.</div>';
                 return;
@@ -1564,7 +1567,7 @@ let nextId = 3;
                             const labButtonClass = hasLab ? 'toggle-lab-btn active' : 'toggle-lab-btn';
                             const buttonName = item.isLab ? item.name : baseName;
                             return `
-                                <div class="subject-item ${item.category === 'elective' ? 'elective' : 'main'} ${item.isLab ? 'lab' : ''}">
+                                <div class="subject-item ${item.category === 'elective' ? 'elective' : item.category === 'placement' ? 'placement' : 'main'} ${item.isLab ? 'lab' : ''}">
                                     <span class="subject-item-name">
                                         ${escapeHtml(item.name)}${item.code ? ` (${escapeHtml(item.code)})` : ''}
                                         ${item.isLab ? '<span class="lab-badge">LAB</span>' : ''}
@@ -1583,7 +1586,8 @@ let nextId = 3;
             const sections = [
                 groups.main.length ? renderGroup('Main Subjects', groups.main, 'main') : '',
                 groups.elective.program.length ? renderGroup('Departmental Elective', groups.elective.program, 'elective') : '',
-                groups.elective.open.length ? renderGroup('Open Elective', groups.elective.open, 'elective') : ''
+                groups.elective.open.length ? renderGroup('Open Elective', groups.elective.open, 'elective') : '',
+                groups.placement.length ? renderGroup('Placement & Training', groups.placement, 'placement') : ''
             ].filter(Boolean).join('');
 
             list.innerHTML = sections;
