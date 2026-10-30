@@ -48,7 +48,7 @@ const DEMO_ADMIN_EMAIL = normalizeEmail(process.env.DEMO_ADMIN_EMAIL || 'admin@p
 const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || 'Admin@123';
 const DEMO_ADMIN_NAME = process.env.DEMO_ADMIN_NAME || 'Registrar Admin';
 const STATE_DOCUMENT_ID = 'prestige-state';
-const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects', 'history', 'teacherViews'];
+const COLLECTION_NAMES = ['admins', 'faculty', 'invites', 'timetables', 'timeSettings', 'subjects', 'history', 'teacherViews', 'workloadForms', 'appSettings'];
 
 const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -76,11 +76,14 @@ function loadSeedDb() {
     subjects: [],
     history: [],
     teacherViews: [],
+    workloadForms: [],
+    appSettings: [],
     meta: {
       nextAdminId: 1,
       nextFacultyId: 1,
       nextInviteId: 1,
-      nextTimetableId: 1
+      nextTimetableId: 1,
+      nextWorkloadFormId: 1
     }
   };
 }
@@ -127,6 +130,7 @@ async function readDb() {
 
 async function writeDb(db) {
   for (const name of COLLECTION_NAMES) {
+    if (name === 'appSettings') continue;
     await collections[name].deleteMany({});
     const records = (db[name] || []).map(item => ({ ...item, _id: mongoDocumentIdFor(name, item) }));
     if (records.length) await collections[name].insertMany(records);
@@ -199,7 +203,8 @@ async function ensureMetaCounters() {
         nextAdminId: Math.max(Number(db.meta?.nextAdminId) || 1, buildMetaFromData(db).nextAdminId),
         nextFacultyId: Math.max(Number(db.meta?.nextFacultyId) || 1, buildMetaFromData(db).nextFacultyId),
         nextInviteId: Math.max(Number(db.meta?.nextInviteId) || 1, buildMetaFromData(db).nextInviteId),
-        nextTimetableId: Math.max(Number(db.meta?.nextTimetableId) || 1, buildMetaFromData(db).nextTimetableId)
+        nextTimetableId: Math.max(Number(db.meta?.nextTimetableId) || 1, buildMetaFromData(db).nextTimetableId),
+        nextWorkloadFormId: Math.max(Number(db.meta?.nextWorkloadFormId) || 1, buildMetaFromData(db).nextWorkloadFormId)
       }
     },
     { upsert: true }
@@ -236,7 +241,8 @@ function buildMetaFromData(db) {
     nextAdminId: nextIdFor(db.admins || []),
     nextFacultyId: nextIdFor(db.faculty || []),
     nextInviteId: nextIdFor(db.invites || []),
-    nextTimetableId: nextIdFor(db.timetables || [])
+    nextTimetableId: nextIdFor(db.timetables || []),
+    nextWorkloadFormId: nextIdFor(db.workloadForms || [])
   };
 }
 
@@ -481,13 +487,62 @@ function sanitizeTeacherView(raw) {
   };
 }
 
+function sanitizeAppSettings(raw) {
+  const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
+  const labCatalog = Array.isArray(raw.labCatalog)
+    ? raw.labCatalog.filter(lab => isRecord(lab) && String(lab.id || '').trim() && String(lab.name || '').trim()).map(lab => ({
+      id: String(lab.id).trim(),
+      name: String(lab.name).trim(),
+      subjects: Array.isArray(lab.subjects) ? lab.subjects.filter(isRecord).map(subject => ({
+        key: String(subject.key || '').trim(),
+        label: String(subject.label || '').trim(),
+        course: String(subject.course || 'B.Tech').trim(),
+        semester: String(subject.semester || 'semester1').trim()
+      })).filter(subject => subject.label) : [],
+      createdAt: String(lab.createdAt || '')
+    }))
+    : [];
+  const lectureCounts = isRecord(raw.manageFormLectureCounts) ? Object.fromEntries(
+    Object.entries(raw.manageFormLectureCounts).filter(([key, value]) => (
+      !key.startsWith('$') && !key.includes('.') &&
+      (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)))
+    ))
+  ) : {};
+  const subjectSelections = isRecord(raw.manageFormSubjectSelections) ? Object.fromEntries(
+    Object.entries(raw.manageFormSubjectSelections).filter(([key, value]) => (
+      !key.startsWith('$') && !key.includes('.') && typeof value === 'boolean'
+    ))
+  ) : {};
+  const labTimetable = isRecord(raw.labTimetable)
+    ? Object.fromEntries(Object.entries(raw.labTimetable).filter(([key]) => !key.startsWith('$') && !key.includes('.')))
+    : {};
+
+  return {
+    id: 'global',
+    labCatalog,
+    labTimetable,
+    manageFormLectureCounts: lectureCounts,
+    manageFormSubjectSelections: subjectSelections,
+    teacherRoster: Array.isArray(raw.teacherRoster)
+      ? [...new Set(raw.teacherRoster.map(name => String(name || '').trim()).filter(Boolean))]
+      : []
+  };
+}
+
 function routeKey(method, pathname) {
   return `${method} ${pathname}`;
 }
 
 function buildInviteLink(req, inviteCode) {
-  const origin = APP_ORIGIN || `http://${req.headers.host || `localhost:${PORT}`}`;
-  return `${origin.replace(/\/+$/, '')}/?inviteCode=${encodeURIComponent(inviteCode)}`;
+  const host = req.headers.host || `localhost:${PORT}`;
+  const origin = new URL(APP_ORIGIN || `http://${host}`).origin;
+  return `${origin}/?inviteCode=${encodeURIComponent(inviteCode)}`;
+}
+
+function buildWorkloadFormLink(req, token) {
+  const host = req.headers.host || `localhost:${PORT}`;
+  const origin = new URL(APP_ORIGIN || `http://${host}`).origin;
+  return `${origin}/?workloadForm=${encodeURIComponent(token)}`;
 }
 
 function encodeMailHeader(value) {
@@ -496,6 +551,16 @@ function encodeMailHeader(value) {
 
 function escapeMailText(value) {
   return String(value || '').replace(/\r?\n/g, '\r\n');
+}
+
+function escapeMailHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
 }
 
 function smtpRead(socket) {
@@ -532,7 +597,7 @@ async function smtpCommand(socket, command, expectedCodes) {
   return response;
 }
 
-async function sendGmailInvite(email, inviteLink) {
+async function sendGmailMessage(email, subject, text, html) {
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
     return { sent: false, error: 'Gmail is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD.' };
   }
@@ -560,29 +625,6 @@ async function sendGmailInvite(email, inviteLink) {
     await smtpCommand(socket, `RCPT TO:<${email}>`, [250, 251]);
     await smtpCommand(socket, 'DATA', [354]);
 
-    const subject = 'Faculty registration invite';
-    const text = [
-      'Hello,',
-      '',
-      'You have been invited to register as faculty on the Prestige Institute portal.',
-      '',
-      `Open this link to complete your registration: ${inviteLink}`,
-      '',
-      'After registration, the admin office can approve your faculty access.',
-      '',
-      'Prestige Institute'
-    ].join('\n');
-    const html = `<!doctype html>
-<html>
-<body style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;">
-  <p>Hello,</p>
-  <p>You have been invited to register as faculty on the Prestige Institute portal.</p>
-  <p><a href="${inviteLink}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:10px 14px;text-decoration:none;border-radius:6px;">Register as faculty</a></p>
-  <p>Or open this link:<br><a href="${inviteLink}">${inviteLink}</a></p>
-  <p>After registration, the admin office can approve your faculty access.</p>
-  <p>Prestige Institute</p>
-</body>
-</html>`;
     const boundary = `prestige-${crypto.randomBytes(8).toString('hex')}`;
     const message = [
       `From: ${encodeMailHeader(GMAIL_USER)}`,
@@ -607,10 +649,36 @@ async function sendGmailInvite(email, inviteLink) {
     await smtpCommand(socket, 'QUIT', [221]);
     return { sent: true };
   } catch (error) {
-    return { sent: false, error: error.message || 'Unable to send Gmail invite' };
+    return { sent: false, error: error.message || 'Unable to send Gmail message' };
   } finally {
     socket.end();
   }
+}
+
+async function sendGmailInvite(email, inviteLink) {
+  const text = [
+    'Hello,',
+    '',
+    'You have been invited to register as faculty on the Prestige Institute portal.',
+    '',
+    `Open this link to complete your registration: ${inviteLink}`,
+    '',
+    'After registration, the admin office can approve your faculty access.',
+    '',
+    'Prestige Institute'
+  ].join('\n');
+  const html = `<!doctype html>
+<html>
+<body style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;">
+  <p>Hello,</p>
+  <p>You have been invited to register as faculty on the Prestige Institute portal.</p>
+  <p><a href="${inviteLink}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:10px 14px;text-decoration:none;border-radius:6px;">Register as faculty</a></p>
+  <p>Or open this link:<br><a href="${inviteLink}">${inviteLink}</a></p>
+  <p>After registration, the admin office can approve your faculty access.</p>
+  <p>Prestige Institute</p>
+</body>
+</html>`;
+  return sendGmailMessage(email, 'Faculty registration invite', text, html);
 }
 
 async function handleAuth(req, res, pathname) {
@@ -1043,6 +1111,268 @@ async function handleTeacherViews(req, res, pathname) {
   return notFound(res);
 }
 
+function sanitizeWorkloadSubjects(rawSubjects, defaults = {}) {
+  if (!Array.isArray(rawSubjects)) return [];
+  const boundedCount = value => {
+    const count = Number(value);
+    return Number.isFinite(count) ? Math.max(0, Math.min(12, count)) : 0;
+  };
+  return rawSubjects.map((subject, index) => ({
+    id: String(subject.id || `subject-${index + 1}`).slice(0, 240),
+    name: String(subject.name || '').trim().slice(0, 160),
+    code: String(subject.code || '').trim().slice(0, 80),
+    course: String(subject.course || defaults.course || '').trim().slice(0, 80),
+    semester: String(subject.semester || defaults.semester || '').trim().slice(0, 40),
+    category: String(subject.category || defaults.category || 'main').trim().slice(0, 40),
+    isLab: Boolean(subject.isLab),
+    labEnabled: Boolean(subject.labEnabled),
+    lectureCount: boundedCount(subject.lectureCount),
+    labCount: boundedCount(subject.labCount)
+  })).filter(subject => subject.name);
+}
+
+function workloadSubjectCounts(subject) {
+  return [
+    subject.lectureCount ? `${subject.lectureCount} lectures/week` : '',
+    subject.labEnabled || subject.isLab ? `${subject.labCount || subject.lectureCount} labs/week` : ''
+  ].filter(Boolean).join(', ');
+}
+
+function buildWorkloadFormEmail(form, formLink) {
+  const subjectLines = form.subjects.map(subject => {
+    const label = subject.name + (subject.code ? ` (${subject.code})` : '');
+    const counts = workloadSubjectCounts(subject);
+    return '- ' + label + (counts ? `: ${counts}` : '');
+  });
+  const text = [
+    `Hello ${form.facultyName},`,
+    '',
+    `Please select the subjects you are able to teach for ${form.course}, ${form.semester}.`,
+    ...subjectLines,
+    '',
+    `Open the form: ${formLink}`,
+    '',
+    'Prestige Institute'
+  ].join('\n');
+  const subjectRows = form.subjects.map(subject => {
+    const label = subject.name + (subject.code ? ` (${subject.code})` : '');
+    const counts = workloadSubjectCounts(subject);
+    const countText = counts ? ': ' + escapeMailHtml(counts) : '';
+    return '<li>' + escapeMailHtml(label) + countText + '</li>';
+  }).join('');
+  const html = `<!doctype html>
+<html><body style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;">
+  <p>Hello ${escapeMailHtml(form.facultyName)},</p>
+  <p>Please select the subjects you are able to teach for ${escapeMailHtml(form.course)}, ${escapeMailHtml(form.semester)}.</p>
+  <ul>${subjectRows}</ul>
+  <p><a href="${escapeMailHtml(formLink)}">Open and submit the faculty workload form</a></p>
+  <p>Prestige Institute</p>
+</body></html>`;
+  return { text, html };
+}
+
+function publicWorkloadForm(form) {
+  return {
+    facultyName: form.facultyName,
+    course: form.course,
+    semester: form.semester,
+    category: form.category,
+    subjects: form.subjects,
+    status: form.status,
+    selectedSubjectIds: form.selectedSubjectIds || [],
+    submittedAt: form.submittedAt || ''
+  };
+}
+
+async function submitWorkloadForm(req, res, db, form) {
+  if (!form) return send(res, 404, { error: 'Workload form not found or expired' });
+  if (form.status === 'submitted') return send(res, 409, { error: 'This workload form has already been submitted' });
+  const body = await parseBody(req);
+  const subjectIds = Array.isArray(body.subjectIds) ? [...new Set(body.subjectIds.map(String))] : [];
+  const selectedSubjects = form.subjects.filter(subject => subjectIds.includes(subject.id));
+  if (!selectedSubjects.length) return send(res, 400, { error: 'Select at least one subject before submitting' });
+  if (selectedSubjects.length !== subjectIds.length) return send(res, 400, { error: 'The selection contains an invalid subject' });
+
+  form.selectedSubjectIds = selectedSubjects.map(subject => subject.id);
+  form.selectedSubjects = selectedSubjects;
+  form.status = 'submitted';
+  form.submittedAt = new Date().toISOString();
+  await writeDb(db);
+  return send(res, 200, { ok: true, submittedAt: form.submittedAt });
+}
+
+async function createWorkloadForm(req, res, db) {
+  const body = await parseBody(req);
+  const faculty = db.faculty.find(item => item.id === Number(body.facultyId) && item.status === 'approved');
+  if (!faculty) return send(res, 404, { error: 'Approved faculty member not found' });
+  const formDefaults = {
+    course: String(body.course || '').trim(),
+    semester: String(body.semester || '').trim(),
+    category: String(body.category || 'main').trim()
+  };
+  const subjects = sanitizeWorkloadSubjects(body.subjects, formDefaults);
+  if (!subjects.length) return send(res, 400, { error: 'Select at least one subject to forward' });
+  if (new Set(subjects.map(subject => subject.id)).size !== subjects.length) {
+    return send(res, 400, { error: 'Subject IDs must be unique' });
+  }
+
+  const form = {
+    id: db.meta.nextWorkloadFormId++,
+    facultyId: faculty.id,
+    facultyName: faculty.name,
+    facultyEmail: faculty.email,
+    ...formDefaults,
+    subjects,
+    selectedSubjectIds: [],
+    selectedSubjects: [],
+    status: 'pending',
+    token: crypto.randomBytes(32).toString('hex'),
+    createdAt: new Date().toISOString(),
+    submittedAt: ''
+  };
+  const formLink = buildWorkloadFormLink(req, form.token);
+  const email = buildWorkloadFormEmail(form, formLink);
+  const mailResult = await sendGmailMessage(faculty.email, 'Faculty workload subject selection', email.text, email.html);
+  form.emailSent = mailResult.sent;
+  form.emailError = mailResult.sent ? '' : mailResult.error;
+  db.workloadForms.push(form);
+  await writeDb(db);
+  const publicForm = { ...form };
+  delete publicForm.token;
+  return send(res, 201, { form: publicForm, emailSent: mailResult.sent, emailError: mailResult.error || '' });
+}
+
+async function listFacultyWorkloadForms(req, res, db) {
+  const auth = requireAuth(req, 'faculty');
+  if (!auth) return send(res, 401, { error: 'Faculty login required' });
+  const forms = db.workloadForms
+    .filter(item => item.facultyId === auth.id)
+    .slice()
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    .map(item => ({
+      id: item.id,
+      course: item.course,
+      semester: item.semester,
+      category: item.category,
+      subjects: item.subjects,
+      selectedSubjectIds: item.selectedSubjectIds || [],
+      status: item.status,
+      createdAt: item.createdAt,
+      submittedAt: item.submittedAt || ''
+    }));
+  return send(res, 200, { forms });
+}
+
+async function submitFacultyWorkloadForm(req, res, db, formId) {
+  const auth = requireAuth(req, 'faculty');
+  if (!auth) return send(res, 401, { error: 'Faculty login required' });
+  const form = db.workloadForms.find(item => item.id === Number(formId) && item.facultyId === auth.id);
+  return submitWorkloadForm(req, res, db, form);
+}
+
+async function handleTokenWorkloadForm(req, res, db, tokenMatch) {
+  const form = db.workloadForms.find(item => item.token === tokenMatch[1]);
+  if (req.method === 'POST') return submitWorkloadForm(req, res, db, form);
+  return form
+    ? send(res, 200, { form: publicWorkloadForm(form) })
+    : send(res, 404, { error: 'Workload form not found or expired' });
+}
+
+function listAdminWorkloadForms(res, db) {
+  const forms = db.workloadForms
+    .slice()
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    .map(form => {
+      const publicForm = { ...form };
+      delete publicForm.token;
+      return publicForm;
+    });
+  return send(res, 200, { forms });
+}
+
+async function assignWorkloadSubjectSections(req, res, db, match) {
+  if (!requireAuth(req, 'admin')) return send(res, 401, { error: 'Admin login required' });
+  const form = db.workloadForms.find(item => item.id === Number(match[1]));
+  if (!form) return send(res, 404, { error: 'Workload form not found' });
+  const subjectId = decodeURIComponent(match[2]);
+  const selectedSubject = (form.selectedSubjects || []).find(item => item.id === subjectId);
+  if (!selectedSubject) return send(res, 404, { error: 'Faculty has not selected this subject' });
+
+  const body = await parseBody(req);
+  const validSections = new Set(['sectionA', 'sectionB', 'sectionC']);
+  const sections = Array.isArray(body.sections) ? [...new Set(body.sections.map(String))] : [];
+  if (sections.length > 2) {
+    return send(res, 400, { error: 'A faculty member can be assigned to a maximum of two sections for this subject' });
+  }
+  if (sections.some(section => !validSections.has(section))) {
+    return send(res, 400, { error: 'Invalid section selection' });
+  }
+  selectedSubject.assignedSections = sections;
+  await writeDb(db);
+  return send(res, 200, { ok: true, assignedSections: sections });
+}
+
+async function handleWorkloadForms(req, res, pathname) {
+  const db = await readDb();
+  if (routeKey(req.method, pathname) === 'GET /api/workload-forms/faculty') {
+    return listFacultyWorkloadForms(req, res, db);
+  }
+
+  const facultySubmitMatch = pathname.match(/^\/api\/workload-forms\/(\d+)\/faculty-submit$/);
+  if (req.method === 'POST' && facultySubmitMatch) {
+    return submitFacultyWorkloadForm(req, res, db, facultySubmitMatch[1]);
+  }
+
+  const sectionAssignmentMatch = pathname.match(/^\/api\/workload-forms\/(\d+)\/subjects\/([^/]+)\/sections$/);
+  if (req.method === 'PATCH' && sectionAssignmentMatch) {
+    return assignWorkloadSubjectSections(req, res, db, sectionAssignmentMatch);
+  }
+
+  const tokenMatch = pathname.match(/^\/api\/workload-forms\/([a-f0-9]{64})(?:\/(submit))?$/i);
+  if (tokenMatch) return handleTokenWorkloadForm(req, res, db, tokenMatch);
+  if (!requireAuth(req, 'admin')) return send(res, 401, { error: 'Admin login required' });
+  if (routeKey(req.method, pathname) === 'GET /api/workload-forms') return listAdminWorkloadForms(res, db);
+  if (routeKey(req.method, pathname) === 'POST /api/workload-forms') return createWorkloadForm(req, res, db);
+  return notFound(res);
+}
+
+async function handleAppSettings(req, res, pathname) {
+  const auth = requireAuth(req);
+  if (!auth) return send(res, 401, { error: 'Login required' });
+
+  if (routeKey(req.method, pathname) === 'GET /api/app-settings') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const settings = await collections.appSettings.findOne({ _id: 'global' }, { projection: { _id: 0 } });
+    return send(res, 200, { settings: settings ? stripMongoId(settings) : null });
+  }
+
+  if (routeKey(req.method, pathname) === 'PUT /api/app-settings') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return send(res, 400, { error: 'App settings must be a JSON object' });
+    }
+    if (body.settings !== undefined && (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings))) {
+      return send(res, 400, { error: 'Settings must be a JSON object' });
+    }
+    const rawSettings = body.settings || body;
+    const existing = await collections.appSettings.findOne({ _id: 'global' });
+    const settings = {
+      ...sanitizeAppSettings(rawSettings),
+      createdAt: existing?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await collections.appSettings.replaceOne(
+      { _id: 'global' },
+      { _id: 'global', ...settings },
+      { upsert: true }
+    );
+    return send(res, 200, { settings });
+  }
+
+  return notFound(res);
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -1067,6 +1397,8 @@ async function handleRequest(req, res) {
     if (pathname.startsWith('/api/subjects')) return handleSubjects(req, res, pathname);
     if (pathname.startsWith('/api/history')) return handleHistory(req, res, pathname);
     if (pathname.startsWith('/api/teacher-views')) return handleTeacherViews(req, res, pathname);
+    if (pathname.startsWith('/api/app-settings')) return handleAppSettings(req, res, pathname);
+    if (pathname.startsWith('/api/workload-forms')) return handleWorkloadForms(req, res, pathname);
     if (serveStatic(req, res, pathname)) return;
     return notFound(res);
   } catch (error) {
@@ -1094,4 +1426,3 @@ if (require.main === module) {
 
 module.exports = handleRequest;
 module.exports.resolveMongoConfig = resolveMongoConfig;
-

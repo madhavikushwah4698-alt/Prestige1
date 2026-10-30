@@ -5,8 +5,115 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Prestige Institute - Access Portal</title>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <link rel="stylesheet" href="modules/styles.css">
+    <script>
+        const inviteLinkPage = new URLSearchParams(window.location.search).has('inviteCode');
+        let inviteFacultySession = false;
+        try {
+            inviteFacultySession = sessionStorage.getItem('prestigeInviteFacultyMode') === 'true';
+        } catch (error) {
+            console.warn('Invite session preference could not be read:', error);
+        }
+        if (inviteLinkPage) {
+            document.documentElement.classList.add('invite-link-pending');
+        }
+        if (inviteLinkPage || inviteFacultySession) {
+            document.documentElement.classList.add('invite-faculty-only');
+        }
+    </script>
+    <style>
+        .screen {
+            display: none;
+            min-height: 100vh;
+        }
+
+        .screen.active {
+            display: flex;
+        }
+
+        html.invite-link-pending #screen-login {
+            display: none !important;
+        }
+
+        html.invite-link-pending #screen-signup {
+            display: flex !important;
+        }
+
+        html.invite-faculty-only #tab-admin,
+        html.invite-faculty-only #login-hint {
+            display: none !important;
+        }
+
+        html.invite-link-pending #invite-registration-notice {
+            display: block !important;
+        }
+
+        html.invite-link-pending body {
+            background: #f6f1e7;
+            color: #1b2a4a;
+            font-family: Arial, sans-serif;
+        }
+
+        html.invite-link-pending #screen-signup .split {
+            display: flex;
+            width: 100%;
+            min-height: 100vh;
+        }
+
+        html.invite-link-pending #screen-signup .split-brand {
+            flex: 0 0 42%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 56px 48px;
+            color: #f6f1e7;
+            background: #1b2a4a;
+        }
+
+        html.invite-link-pending #screen-signup .split-form {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px;
+        }
+
+        html.invite-link-pending #screen-signup .form-card {
+            width: min(100%, 520px);
+            padding: 36px;
+            background: #fffdf8;
+            border-radius: 12px;
+        }
+
+        html.invite-link-pending #screen-signup .field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 18px 0;
+        }
+
+        html.invite-link-pending #screen-signup input {
+            width: 100%;
+            min-height: 44px;
+            padding: 10px 12px;
+        }
+
+        @media (max-width: 760px) {
+            html.invite-link-pending #screen-signup .split-brand {
+                display: none;
+            }
+
+            html.invite-link-pending #screen-signup .split-form {
+                padding: 16px;
+            }
+
+            html.invite-link-pending #screen-signup .form-card {
+                padding: 24px;
+            }
+        }
+    </style>
+    <link rel="preload" href="modules/styles.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="modules/styles.css"></noscript>
+    <script async src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 
 <body>
@@ -109,6 +216,9 @@
                         <p>This creates a pending request - not an active account.</p>
                     </div>
 
+                    <div class="hint-box" id="invite-registration-notice" hidden>
+                        Verifying your faculty invitation. Registration will be enabled once verified.
+                    </div>
                     <div class="error-msg" id="signup-error"></div>
 
                     <div class="field">
@@ -134,7 +244,7 @@
                         <input type="password" id="su-password" placeholder="Enter your Passward">
                     </div>
 
-                    <button class="btn btn-brass" onclick="handleSignup()">Submit for approval</button>
+                    <button class="btn btn-brass" id="signup-submit-button" onclick="handleSignup()">Submit for approval</button>
 
                     <div class="form-foot">
                         Already registered? <a onclick="showScreen('login')">Back to sign in</a>
@@ -191,6 +301,30 @@
                         </svg>
                         Manage Faculty
                         <span class="side-badge" id="sidebar-pending-badge">0</span>
+                    </div>
+                    <div class="side-item" id="nav-manage-form" onclick="setAdminPanel('manage-form')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M7 3.5h7l3 3V20.5H7z" />
+                            <path d="M14 3.5v4h4" />
+                            <path d="M9.5 11h5M9.5 14h5M9.5 17h3" />
+                        </svg>
+                        Manage Form
+                    </div>
+                    <div class="side-item" id="nav-manage-workload" onclick="setAdminPanel('manage-workload')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M5 5h14v14H5z" />
+                            <path d="M8 9h8M8 13h5M8 17h7" />
+                            <path d="M15 3v4M9 3v4" />
+                        </svg>
+                        Manage Workload
+                    </div>
+                    <div class="side-item" id="nav-manage-lab" onclick="setAdminPanel('manage-lab')">
+                        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M8 3v5l-4 8a3.5 3.5 0 0 0 3.1 5h9.8a3.5 3.5 0 0 0 3.1-5l-4-8V3" />
+                            <path d="M9 3h6" />
+                            <path d="M6.5 15h11" />
+                        </svg>
+                        Manage Lab
                     </div>
                 </div>
 
@@ -353,6 +487,7 @@
                     <div class="card">
                         <div class="card-title">Pending requests</div>
                         <div class="card-sub">Grant access to allow faculty to sign in immediately.</div>
+                        <div class="error-msg" id="manage-faculty-load-error" role="alert"></div>
                         <div id="pending-list"></div>
                     </div>
 
@@ -407,6 +542,152 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- MANAGE FORM PANEL -->
+                <div class="panel" id="panel-manage-form">
+                    <div class="main-head manage-form-head">
+                        <div>
+                            <h1>Manage Form</h1>
+                            <p>Configure curriculum courses, semesters, and weekly lecture allocations</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date-form"></div>
+                    </div>
+
+                    <div class="manage-form-shell">
+                        <div class="manage-form-controls">
+                            <select aria-label="Course">
+                                <option>B.Tech</option>
+                                <option>M.Tech</option>
+                            </select>
+                            <select aria-label="Semester">
+                                <option>semester 1</option>
+                                <option>semester 2</option>
+                                <option>semester 3</option>
+                                <option>semester 4</option>
+                                <option>semester 5</option>
+                                <option>semester 6</option>
+                                <option>semester 7</option>
+                                <option>semester 8</option>
+                            </select>
+                        </div>
+                        <div class="manage-form-recipient">
+                            <span id="manage-form-faculty-label">Send to approved faculty</span>
+                            <div class="manage-form-faculty-picker" id="manage-form-faculty-picker">
+                                <button type="button" class="manage-form-faculty-toggle" id="manage-form-faculty-toggle" aria-label="Select approved faculty" aria-expanded="false" aria-controls="manage-form-faculty-menu">
+                                    <span id="manage-form-faculty-selection">Loading faculty...</span>
+                                    <span class="manage-form-faculty-caret" aria-hidden="true"></span>
+                                </button>
+                                <div class="manage-form-faculty-menu" id="manage-form-faculty-menu" hidden>
+                                    <div id="manage-form-faculty-options" class="manage-form-faculty-options"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="manage-form-tabs" role="tablist" aria-label="Subject category">
+                            <button type="button" class="manage-form-tab active">Main</button>
+                            <button type="button" class="manage-form-tab">Departmental</button>
+                            <button type="button" class="manage-form-tab">open</button>
+                            <button type="button" class="manage-form-tab manage-form-tab-wide">placement &amp; training</button>
+                        </div>
+
+                        <div class="manage-form-table-head">
+                            <span>Subject Name</span>
+                            <span>Create Lab</span>
+                            <span>Per Week Count</span>
+                        </div>
+
+                        <div class="manage-form-list" id="manage-form-subject-list">
+                            <div class="manage-form-empty">No subjects added yet.</div>
+                        </div>
+
+                        <div class="manage-form-actions">
+                            <button type="button" class="manage-form-save">Save</button>
+                            <button type="button" class="manage-form-forward">
+                                Forward
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 12h14" />
+                                    <path d="M13 6l6 6-6 6" />
+                                </svg>
+                            </button>
+                            <span class="card-sub" data-app-settings-save-status role="status" aria-live="polite"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MANAGE WORKLOAD PANEL -->
+                <div class="panel" id="panel-manage-workload">
+                    <div class="main-head">
+                        <div>
+                            <h1>Manage Workload</h1>
+                            <p>Review faculty subject preferences by course and semester.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date-workload"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Subject selections</div>
+                        <div class="card-sub">Choose a course and semester, then open a subject to see who selected it.</div>
+                        <div class="manage-workload-filters">
+                            <label>Course<select id="manage-workload-course" aria-label="Filter by course"></select></label>
+                            <label>Semester<select id="manage-workload-semester" aria-label="Filter by semester"></select></label>
+                        </div>
+                        <div id="manageWorkloadContent" class="manage-workload-content"></div>
+                    </div>
+                </div>
+
+                <!-- MANAGE LAB PANEL -->
+                <div class="panel" id="panel-manage-lab">
+                    <div class="main-head">
+                        <div>
+                            <h1>Manage Lab</h1>
+                            <p>Configure lab subjects, durations, and practical allocation settings.</p>
+                        </div>
+                        <div class="date-chip mono" id="admin-date-lab"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Add Lab</div>
+                        <div class="card-sub">Create a lab and assign subjects to it.</div>
+                        <div class="error-msg" id="manage-lab-error"></div>
+                        <div class="success-msg" id="manage-lab-success"></div>
+
+                        <div class="field-row">
+                            <div class="field">
+                                <label>Lab Name</label>
+                                <input type="text" id="lab-name" placeholder="Programming Lab">
+                            </div>
+                            <div class="field">
+                                <label>Lab ID</label>
+                                <input type="text" id="lab-id" placeholder="LAB-101">
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label>Subjects</label>
+                            <div class="lab-subject-list" id="lab-subject-list"></div>
+                        </div>
+
+                        <button class="btn btn-brass" type="button" onclick="addLab()">Add Lab</button>
+                        <div class="card-sub" data-app-settings-save-status role="status" aria-live="polite"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Added Labs</div>
+                        <div class="card-sub">Labs and their assigned subjects.</div>
+                        <div id="lab-list" class="lab-list"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="lab-timetable-head">
+                            <div>
+                                <div class="card-title">Lab Timetable</div>
+                                <div class="card-sub">Schedule labs using the dashboard time slots.</div>
+                            </div>
+                        </div>
+                        <div id="lab-timetable" class="lab-timetable"></div>
+                    </div>
+                </div>
+
                 <div class="panel" id="panel-time-setting">
                     <div class="main-head">
                         <div>
@@ -529,11 +810,14 @@
                     <div class="main-head">
                         <div>
                             <h1>View Faculty</h1>
-                            <p>Register new faculty members directly from the admin console.</p>
+                            <p>Review approved faculty, view their timetables, and manage imported roster entries.</p>
                         </div>
                         <div class="date-chip mono" id="admin-date4"></div>
                     </div>
                     <div class="card">
+                        <div class="error-msg" id="view-faculty-load-error" role="alert"></div>
+                        <div class="card-sub" data-app-settings-save-status role="status" aria-live="polite"></div>
+                        <div class="card-sub" id="view-faculty-save-status" role="status" aria-live="polite"></div>
 
                         <div id="teachersManagementSection" class="section-content section-content--open">
                             <div class="field">
@@ -698,10 +982,8 @@
                                             <option value="M.Tech">M.Tech</option>
                                         </select>
                                     </label>
-                                    <input type="file" id="dashboardExcelFileInput" accept=".xlsx,.xls"
-                                        style="display:none" onchange="uploadDashboardTimetableFromExcel()">
-                                    <button type="button" class="btn--purple btn-small"
-                                        onclick="uploadDashboardTimetableFromExcel()"> Upload Excel</button>
+                                    <button type="button" class="btn--green btn-small" id="dashboardGenerateTimetableButton"
+                                        onclick="generateDashboardTimetable()">Generate from Workload</button>
                                     <button type="button" class="btn-danger btn-small"
                                         onclick="clearDashboardTimetable()">Clear Current</button>
                                     <!-- Upload Students button removed -->
@@ -720,6 +1002,7 @@
                                     <tbody id="dashboardTimetableBody"></tbody>
                                 </table>
                             </div>
+                            <div class="card-sub" id="dashboard-save-status" role="status" aria-live="polite"></div>
                             <div class="card" id="dashboardSubjectSummaryCard" style="margin-top:16px;">
                                 <div class="card-title">Subject Summary</div>
                                 <div class="card-sub">Aggregated subjects and counts for the current semester & section.
@@ -737,23 +1020,50 @@
                     <div class="edit-modal" onclick="event.stopPropagation()">
                         <h3>Edit Time Slot</h3>
                         <p>Update the selected slot details for this dashboard timetable.</p>
-                        <div class="modal-row">
+                        <div class="modal-row" id="editSlotSingleSubjectRow">
                             <label for="editSlotSubject">Subject</label>
                             <select id="editSlotSubject"
                                 style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);">
                                 <option value="">(Select subject)</option>
                             </select>
                         </div>
-                        <div class="modal-row">
+                        <div class="modal-row" id="editSlotSingleTeacherRow">
                             <label for="editSlotTeacher">Teacher</label>
                             <select id="editSlotTeacher"
                                 style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);">
                                 <option value="">(Select teacher)</option>
                             </select>
                         </div>
-                        <div class="modal-row">
+                        <div class="modal-row" id="editSlotSingleRoomRow">
                             <label for="editSlotRoom">Room Number</label>
                             <input id="editSlotRoom" type="text" placeholder="Enter room number">
+                        </div>
+                        <div id="editSlotLabBatches" hidden>
+                            <p class="card-sub">Assign separate lab subjects, faculty, and rooms to the two 30-student batches.</p>
+                            <div class="modal-row">
+                                <label for="editSlotP1Subject">P1 batch subject</label>
+                                <select id="editSlotP1Subject"></select>
+                            </div>
+                            <div class="modal-row">
+                                <label for="editSlotP1Teacher">P1 batch faculty</label>
+                                <select id="editSlotP1Teacher"></select>
+                            </div>
+                            <div class="modal-row">
+                                <label for="editSlotP1Room">P1 batch lab room</label>
+                                <input id="editSlotP1Room" type="text" placeholder="Enter P1 lab room" required>
+                            </div>
+                            <div class="modal-row">
+                                <label for="editSlotP2Subject">P2 batch subject</label>
+                                <select id="editSlotP2Subject"></select>
+                            </div>
+                            <div class="modal-row">
+                                <label for="editSlotP2Teacher">P2 batch faculty</label>
+                                <select id="editSlotP2Teacher"></select>
+                            </div>
+                            <div class="modal-row">
+                                <label for="editSlotP2Room">P2 batch lab room</label>
+                                <input id="editSlotP2Room" type="text" placeholder="Enter P2 lab room" required>
+                            </div>
                         </div>
                         <div class="modal-row">
                             <label for="editSlotClassTeacher">Class Teacher</label>
@@ -847,6 +1157,13 @@
                         <path d="M3.5 9h17" />
                     </svg>
                     My Profile
+                </div>
+                <div class="side-item" id="faculty-nav-workload" onclick="setFacultySection('workload')">
+                    <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M8 4h8l2 2v14H6V4z" />
+                        <path d="M9 10h6M9 14h2l1.5 1.5L16 12" />
+                    </svg>
+                    Subject Preferences
                 </div>
                 <div class="side-item" id="faculty-nav-dashboard" onclick="setFacultySection('dashboard')">
                     <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -960,6 +1277,17 @@
                     </div>
                 </div>
 
+                <div class="card" id="faculty-workload-section" style="display:none;">
+                    <div class="faculty-workload-heading-row">
+                        <div>
+                            <h2 id="faculty-workload-heading">Subject Preferences</h2>
+                            <p>Select the subjects you are able to teach.</p>
+                        </div>
+                        <button type="button" class="faculty-workload-refresh" onclick="loadFacultyWorkloadForms()" aria-label="Refresh workload forms" title="Refresh forms">&#8635;</button>
+                    </div>
+                    <div id="facultyWorkloadForms" class="faculty-workload-list" aria-live="polite"></div>
+                </div>
+
                 <div class="card" id="faculty-profile-section">
                     <div class="card-title">Your profile</div>
                     <div class="card-sub">Details on file with the registrar.</div>
@@ -1015,6 +1343,17 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <div class="screen" id="screen-workload-response">
+        <main class="workload-response-shell">
+            <div class="workload-response-brand">Prestige Institute <span>Faculty Portal</span></div>
+            <h1>Subject preference form</h1>
+            <p id="workload-response-intro" class="workload-response-intro">Loading your form...</p>
+            <output id="workload-response-status" class="workload-response-status"></output>
+            <div id="workload-response-subjects" class="workload-response-subjects"></div>
+            <button type="button" id="workload-response-submit" class="workload-response-submit" hidden>Submit selections</button>
+        </main>
     </div>
 
     <script src="modules/app.js"></script>
