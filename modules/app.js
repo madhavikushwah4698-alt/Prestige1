@@ -5599,9 +5599,28 @@ let nextId = 3;
         .preview-toolbar button:hover { background: #3c4043; }
         .preview-toolbar .print-button { border-color: #8ab4f8; background: #8ab4f8; color: #202124; font-weight: 700; }
         .zoom-label { min-width: 54px; text-align: center; }
-        .preview-workspace { position: absolute; inset: 56px 0 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 22px; }
+        .preview-workspace { position: absolute; inset: 56px 310px 0 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 22px; transition: right 150ms ease; }
         .page-frame { position: relative; flex: 0 0 auto; }
         .paper { position: absolute; top: 0; left: 0; width: 1123px; min-height: 794px; padding: 34px; overflow: visible; transform-origin: top left; background: #fff; box-shadow: 0 2px 12px #0008; }
+        .paper.grayscale { filter: grayscale(1); }
+        .paper.no-backgrounds th, .paper.no-backgrounds [style*="background"] { background: transparent !important; }
+        .settings-panel { position: fixed; z-index: 1; top: 56px; right: 0; bottom: 0; width: 310px; overflow: auto; padding: 18px; background: #f8f9fa; color: #202124; font: 14px Arial, sans-serif; box-shadow: -2px 0 8px #0003; }
+        .settings-panel h2 { margin: 0 0 18px; font-size: 18px; }
+        .setting-field { display: grid; gap: 7px; margin-bottom: 16px; }
+        .setting-field label, .settings-panel summary { font-weight: 600; }
+        .settings-panel select { width: 100%; height: 38px; padding: 0 10px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; color: #202124; font: inherit; }
+        .settings-panel details { padding-top: 12px; border-top: 1px solid #dadce0; }
+        .settings-panel summary { cursor: pointer; }
+        .settings-panel .check-option { display: flex; align-items: center; gap: 9px; margin-top: 14px; font-weight: 400; }
+        .settings-panel input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #1a73e8; }
+        body.settings-hidden .preview-workspace { right: 0; }
+        body.settings-hidden .settings-panel { display: none; }
+        @media (max-width: 760px) {
+            .preview-toolbar { gap: 5px; padding: 0 8px; }
+            .preview-toolbar button { padding: 0 8px; }
+            .settings-panel { width: 270px; }
+            .preview-workspace { right: 270px; }
+        }
         .print-header { display: grid; justify-items: center; gap: 5px; margin-bottom: 9px; text-align: center; }
         .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 16px; line-height: 1.25; }
         .print-subheading { font-weight: 600; font-size: 12px; color: #111827; margin-top: 3px; }
@@ -5624,10 +5643,10 @@ let nextId = 3;
         .no-break, .summary-table, .dashboard-timetable-table { page-break-inside: avoid; }
         @media print {
             html, body { width: auto !important; height: auto !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; background: #fff !important; }
-            .preview-toolbar { display: none !important; }
-            .preview-workspace { position: static !important; display: block !important; overflow: visible !important; padding: 0 !important; }
+            .preview-toolbar, .settings-panel { display: none !important; }
+            .preview-workspace { position: static !important; inset: auto !important; display: block !important; overflow: visible !important; padding: 0 !important; }
             .page-frame { width: auto !important; height: auto !important; }
-            .paper { position: static !important; width: auto !important; min-height: 0 !important; padding: 0 !important; overflow: visible !important; transform: none !important; box-shadow: none !important; }
+            .paper { position: static !important; width: auto !important; min-height: 0 !important; padding: 0 !important; overflow: visible !important; transform: none !important; zoom: var(--print-scale, 1) !important; box-shadow: none !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
             .print-header, .print-heading, .info-line { page-break-inside: avoid; }
             table, .summary-table, tr, th, td { page-break-inside: avoid; }
             .dashboard-timetable-table, .summary-table-container { width: 100% !important; max-width: 100% !important; }
@@ -5644,9 +5663,58 @@ let nextId = 3;
         <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
         <span class="zoom-label" id="zoom-label">100%</span>
         <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" id="settings-toggle" aria-expanded="true">Hide settings</button>
         <button type="button" onclick="window.close()">Close</button>
         <button type="button" class="print-button" onclick="window.print()">Print</button>
     </div>
+    <aside class="settings-panel" aria-label="Print settings">
+        <h2>Print settings</h2>
+        <div class="setting-field">
+            <label for="layout-setting">Layout</label>
+            <select id="layout-setting">
+                <option value="landscape" selected>Landscape</option>
+                <option value="portrait">Portrait</option>
+            </select>
+        </div>
+        <div class="setting-field">
+            <label for="paper-setting">Paper size</label>
+            <select id="paper-setting">
+                <option value="A4" selected>A4</option>
+                <option value="Letter">Letter</option>
+                <option value="Legal">Legal</option>
+            </select>
+        </div>
+        <div class="setting-field">
+            <label for="color-setting">Color</label>
+            <select id="color-setting">
+                <option value="color" selected>Color</option>
+                <option value="grayscale">Black and white</option>
+            </select>
+        </div>
+        <div class="setting-field">
+            <label for="scale-setting">Scale</label>
+            <select id="scale-setting">
+                <option value="1" selected>100%</option>
+                <option value="0.9">90%</option>
+                <option value="0.8">80%</option>
+                <option value="0.7">70%</option>
+                <option value="0.6">60%</option>
+            </select>
+        </div>
+        <div class="setting-field">
+            <label for="margin-setting">Margins</label>
+            <select id="margin-setting">
+                <option value="0.35in" selected>Default</option>
+                <option value="0.1in">Minimum</option>
+                <option value="0">None</option>
+            </select>
+        </div>
+        <details open>
+            <summary>More settings</summary>
+            <label class="check-option"><input id="background-setting" type="checkbox" checked> Background graphics</label>
+            <label class="check-option"><input id="summary-setting" type="checkbox" checked> Subject summary</label>
+        </details>
+    </aside>
     <div class="preview-workspace" id="preview-workspace">
         <div class="page-frame" id="page-frame">
             <main class="paper" id="paper">
@@ -5678,26 +5746,71 @@ let nextId = 3;
             const frame = document.getElementById('page-frame');
             const paper = document.getElementById('paper');
             const zoomLabel = document.getElementById('zoom-label');
-            const pageWidth = 1123;
-            const pageHeight = () => Math.max(794, paper.scrollHeight);
+            const pageSizes = {
+                A4: [1123, 794],
+                Letter: [1056, 816],
+                Legal: [1344, 816]
+            };
+            const layoutSetting = document.getElementById('layout-setting');
+            const paperSetting = document.getElementById('paper-setting');
+            const colorSetting = document.getElementById('color-setting');
+            const scaleSetting = document.getElementById('scale-setting');
+            const marginSetting = document.getElementById('margin-setting');
+            const pageRules = document.createElement('style');
+            document.head.appendChild(pageRules);
+            let pageWidth = 1123;
+            let pageBaseHeight = 794;
+            let printScale = 1;
             let zoom = 1;
+            const pageHeight = () => Math.max(pageBaseHeight, paper.scrollHeight / printScale);
             function applyZoom() {
                 paper.style.transform = 'scale(' + zoom + ')';
-                frame.style.width = (pageWidth * zoom) + 'px';
-                frame.style.height = (pageHeight() * zoom) + 'px';
+                paper.style.zoom = String(printScale);
+                paper.style.setProperty('--print-scale', String(printScale));
+                frame.style.width = (pageWidth * printScale * zoom) + 'px';
+                frame.style.height = (pageHeight() * printScale * zoom) + 'px';
                 zoomLabel.textContent = Math.round(zoom * 100) + '%';
             }
             function fitPage() {
-                zoom = Math.min((workspace.clientWidth - 44) / pageWidth, (workspace.clientHeight - 44) / pageHeight(), 1.5);
+                zoom = Math.min(
+                    (workspace.clientWidth - 44) / (pageWidth * printScale),
+                    (workspace.clientHeight - 44) / (pageHeight() * printScale),
+                    1.5
+                );
                 zoom = Math.max(0.25, zoom);
                 applyZoom();
+            }
+            function updatePageSettings() {
+                const size = pageSizes[paperSetting.value];
+                pageWidth = size[0];
+                pageBaseHeight = size[1];
+                if (layoutSetting.value === 'portrait') {
+                    [pageWidth, pageBaseHeight] = [pageBaseHeight, pageWidth];
+                }
+                paper.style.width = pageWidth + 'px';
+                paper.style.minHeight = pageBaseHeight + 'px';
+                pageRules.textContent = '@page { size: ' + paperSetting.value + ' ' + layoutSetting.value + '; margin: ' + marginSetting.value + '; }';
+                paper.classList.toggle('grayscale', colorSetting.value === 'grayscale');
+                paper.classList.toggle('no-backgrounds', !document.getElementById('background-setting').checked);
+                document.querySelector('.summary-table-container').hidden = !document.getElementById('summary-setting').checked;
+                printScale = Number(scaleSetting.value);
+                fitPage();
             }
             document.getElementById('fit-page').addEventListener('click', fitPage);
             document.getElementById('zoom-in').addEventListener('click', () => { zoom = Math.min(2.5, zoom + 0.1); applyZoom(); });
             document.getElementById('zoom-out').addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.1); applyZoom(); });
+            document.getElementById('settings-toggle').addEventListener('click', event => {
+                document.body.classList.toggle('settings-hidden');
+                event.currentTarget.textContent = document.body.classList.contains('settings-hidden') ? 'Show settings' : 'Hide settings';
+                event.currentTarget.setAttribute('aria-expanded', String(!document.body.classList.contains('settings-hidden')));
+                fitPage();
+            });
+            [layoutSetting, paperSetting, colorSetting, scaleSetting, marginSetting,
+                document.getElementById('background-setting'), document.getElementById('summary-setting')]
+                .forEach(control => control.addEventListener('change', updatePageSettings));
             window.addEventListener('resize', fitPage);
             document.fonts.ready.then(fitPage);
-            fitPage();
+            updatePageSettings();
         })();
     </script>
 </body>
