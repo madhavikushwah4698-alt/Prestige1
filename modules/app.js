@@ -5503,7 +5503,7 @@ let nextId = 3;
             return n ? `Semester ${toRoman(n)}` : '';
         }
 
-        function printDashboardTimetable() {
+        async function printDashboardTimetable() {
             try {
                 const semesterNum = parseInt(dashboardTimetableState.currentSemester.replace('semester', ''), 10) || 0;
                 const sectionLetter = dashboardTimetableState.currentSection.replace('section', '');
@@ -5592,17 +5592,17 @@ let nextId = 3;
         @page { size: A4 landscape; margin: 0.35in; }
         * { box-sizing: border-box; }
         html, body { width: auto; min-width: 0; margin: 0; padding: 0; }
-        body { font-family: Inter, Arial, sans-serif; color: #111827; font-size: 12px; }
-        .print-header { display: grid; justify-items: center; gap: 5px; margin-bottom: 9px; text-align: center; }
-        .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 16px; line-height: 1.25; }
-        .print-subheading { font-weight: 600; font-size: 12px; color: #111827; margin-top: 3px; }
-        .info-line { display: flex; justify-content: space-between; align-items: center; margin: 9px 0 14px; font-weight: 700; font-size: 12px; gap: 8px; }
+        body { font-family: Inter, Arial, sans-serif; color: #111827; font-size: 13px; }
+        .print-header { display: grid; justify-items: center; gap: 6px; margin-bottom: 12px; text-align: center; }
+        .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 18px; line-height: 1.25; }
+        .print-subheading { font-weight: 600; font-size: 13px; color: #111827; margin-top: 4px; }
+        .info-line { display: flex; justify-content: space-between; align-items: center; margin: 10px 0 16px; font-weight: 700; font-size: 13px; gap: 8px; }
         .info-line div { flex: 1; }
         .info-line div:first-child { text-align: left; }
         .info-line div:nth-child(2) { text-align: center; }
         .info-line div:last-child { text-align: right; }
-        table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
-        th, td { min-width: 0; border: 0.5px solid #999; padding: 7px 5px; }
+        table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+        th, td { min-width: 0; border: 0.5px solid #999; padding: 9px 7px; }
         th { background: #f0f0f0; text-align: left; }
         td { text-align: left; vertical-align: middle; overflow-wrap: anywhere; word-break: normal; white-space: normal; }
         td.numeric, .summary-table th.numeric, .summary-table td.numeric { text-align: center; }
@@ -5611,6 +5611,7 @@ let nextId = 3;
         .dashboard-timetable-table, .summary-table-container, .summary-table { width: 100%; max-width: 100%; min-width: 0; }
         .dashboard-timetable-table table { table-layout: fixed; }
         .dashboard-timetable-table th:first-child, .dashboard-timetable-table td:first-child { width: 11%; }
+        .dashboard-timetable-table tbody td { height: 0.72in; }
         .summary-table { margin-top: 10px; }
         .no-break, .summary-table, .dashboard-timetable-table { page-break-inside: avoid; }
         @media print {
@@ -5619,7 +5620,8 @@ let nextId = 3;
             table, .summary-table, tr, th, td { page-break-inside: avoid; }
             .dashboard-timetable-table, .summary-table-container { width: 100% !important; max-width: 100% !important; }
             .dashboard-timetable-table table, .summary-table { width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; table-layout: fixed !important; }
-            table th, table td { min-width: 0 !important; padding: 7px 5px !important; font-size: 11px !important; line-height: 1.25 !important; overflow-wrap: anywhere; }
+            table th, table td { min-width: 0 !important; padding: 9px 7px !important; font-size: 13px !important; line-height: 1.3 !important; overflow-wrap: anywhere; }
+            .dashboard-timetable-table tbody td { height: 0.72in !important; }
         }
     </style>
 </head>
@@ -5652,14 +5654,18 @@ let nextId = 3;
                     return;
                 }
 
-                printWindow.document.write(printHtml);
-                printWindow.document.close();
-                printWindow.focus();
                 printWindow.addEventListener('afterprint', () => {
                     if (!printWindow.closed) {
                         printWindow.close();
                     }
+                }, { once: true });
+                printWindow.document.write(printHtml);
+                printWindow.document.close();
+                await printWindow.document.fonts.ready;
+                await new Promise(resolve => {
+                    printWindow.requestAnimationFrame(() => printWindow.requestAnimationFrame(resolve));
                 });
+                printWindow.focus();
                 printWindow.print();
             } catch (error) {
                 console.error('Print failed', error);
