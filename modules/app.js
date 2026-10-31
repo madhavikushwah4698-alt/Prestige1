@@ -5589,24 +5589,24 @@ let nextId = 3;
     <meta charset="utf-8">
     <title>Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}</title>
     <style>
-        @page { size: A4 landscape; margin: 0.25in; }
+        @page { size: A4 landscape; margin: 0.35in; }
         * { box-sizing: border-box; }
         html, body { width: auto; min-width: 0; margin: 0; padding: 0; }
-        body { font-family: Inter, Arial, sans-serif; color: #111827; font-size: 10px; }
-        .print-header { display: grid; justify-items: center; gap: 4px; margin-bottom: 6px; text-align: center; }
-        .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 13px; line-height: 1.2; }
-        .print-subheading { font-weight: 600; font-size: 10px; color: #111827; margin-top: 2px; }
-        .info-line { display: flex; justify-content: space-between; align-items: center; margin: 6px 0 12px; font-weight: 700; font-size: 10px; gap: 6px; }
+        body { font-family: Inter, Arial, sans-serif; color: #111827; font-size: 12px; }
+        .print-header { display: grid; justify-items: center; gap: 5px; margin-bottom: 9px; text-align: center; }
+        .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 16px; line-height: 1.25; }
+        .print-subheading { font-weight: 600; font-size: 12px; color: #111827; margin-top: 3px; }
+        .info-line { display: flex; justify-content: space-between; align-items: center; margin: 9px 0 14px; font-weight: 700; font-size: 12px; gap: 8px; }
         .info-line div { flex: 1; }
         .info-line div:first-child { text-align: left; }
         .info-line div:nth-child(2) { text-align: center; }
         .info-line div:last-child { text-align: right; }
-        table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 9px; table-layout: fixed; }
-        th, td { min-width: 0; border: 0.5px solid #999; padding: 3px 4px; }
+        table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
+        th, td { min-width: 0; border: 0.5px solid #999; padding: 7px 5px; }
         th { background: #f0f0f0; text-align: left; }
         td { text-align: left; vertical-align: middle; overflow-wrap: anywhere; word-break: normal; white-space: normal; }
         td.numeric, .summary-table th.numeric, .summary-table td.numeric { text-align: center; }
-        .summary-table th, .summary-table td { padding: 5px 4px; border: 1px solid #e5e7eb; }
+        .summary-table th, .summary-table td { padding: 6px 5px; border: 1px solid #e5e7eb; }
         .summary-table th:not(.numeric), .summary-table td:not(.numeric) { text-align: left; }
         .dashboard-timetable-table, .summary-table-container, .summary-table { width: 100%; max-width: 100%; min-width: 0; }
         .dashboard-timetable-table table { table-layout: fixed; }
@@ -5619,7 +5619,7 @@ let nextId = 3;
             table, .summary-table, tr, th, td { page-break-inside: avoid; }
             .dashboard-timetable-table, .summary-table-container { width: 100% !important; max-width: 100% !important; }
             .dashboard-timetable-table table, .summary-table { width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; table-layout: fixed !important; }
-            table th, table td { min-width: 0 !important; padding: 3px 4px !important; font-size: 9px !important; line-height: 1.15 !important; overflow-wrap: anywhere; }
+            table th, table td { min-width: 0 !important; padding: 7px 5px !important; font-size: 11px !important; line-height: 1.25 !important; overflow-wrap: anywhere; }
         }
     </style>
 </head>
