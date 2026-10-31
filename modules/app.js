@@ -5622,6 +5622,7 @@ let nextId = 3;
             .preview-workspace { right: 270px; }
         }
         .print-header { display: grid; justify-items: center; gap: 5px; margin-bottom: 9px; text-align: center; }
+        .print-timestamp { justify-self: end; width: 100%; margin-top: 2px; color: #374151; font-size: 10px; font-weight: 400; text-align: right; }
         .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 16px; line-height: 1.25; }
         .print-subheading { font-weight: 600; font-size: 12px; color: #111827; margin-top: 3px; }
         .info-line { display: flex; justify-content: space-between; align-items: center; margin: 9px 0 14px; font-weight: 700; font-size: 12px; gap: 8px; }
@@ -5721,6 +5722,7 @@ let nextId = 3;
                 <div class="print-header">
                     <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Prestige Institute of Engineering Management &amp; Research, Indore</div>
                     <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Department of Computer Science &amp; Engineering</div>
+                    <div class="print-timestamp">Printed: <time id="print-timestamp"></time></div>
                 </div>
                 <div class="print-heading">
                     Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}
@@ -5756,12 +5758,19 @@ let nextId = 3;
             const colorSetting = document.getElementById('color-setting');
             const scaleSetting = document.getElementById('scale-setting');
             const marginSetting = document.getElementById('margin-setting');
+            const printTimestamp = document.getElementById('print-timestamp');
             const pageRules = document.createElement('style');
             document.head.appendChild(pageRules);
             let pageWidth = 1123;
             let pageBaseHeight = 794;
             let printScale = 1;
             let zoom = 1;
+            function updatePrintTimestamp() {
+                printTimestamp.textContent = new Intl.DateTimeFormat('en-IN', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short'
+                }).format(new Date());
+            }
             const pageHeight = () => Math.max(pageBaseHeight, paper.scrollHeight / printScale);
             function applyZoom() {
                 paper.style.transform = 'scale(' + zoom + ')';
@@ -5808,8 +5817,10 @@ let nextId = 3;
             [layoutSetting, paperSetting, colorSetting, scaleSetting, marginSetting,
                 document.getElementById('background-setting'), document.getElementById('summary-setting')]
                 .forEach(control => control.addEventListener('change', updatePageSettings));
+            window.addEventListener('beforeprint', updatePrintTimestamp);
             window.addEventListener('resize', fitPage);
             document.fonts.ready.then(fitPage);
+            updatePrintTimestamp();
             updatePageSettings();
         })();
     </script>
