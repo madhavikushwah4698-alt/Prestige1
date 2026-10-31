@@ -102,7 +102,7 @@ async function connectDb() {
     const hasCollectionData = await hasDocumentData();
     if (!hasCollectionData) {
       const legacyState = await mongoDb.collection(MONGODB_STATE_COLLECTION).findOne({ _id: STATE_DOCUMENT_ID });
-      await writeDb(legacyState?.state || loadSeedDb());
+      await writeDb(legacyState?.state || loadSeedDb(), { includeWorkloadForms: true });
     }
 
     await ensureDemoAdmin();
@@ -128,17 +128,27 @@ async function readDb() {
   return db;
 }
 
-async function writeDb(db) {
+async function writeDb(db, { includeWorkloadForms = false } = {}) {
   for (const name of COLLECTION_NAMES) {
-    if (name === 'appSettings') continue;
+    if (name === 'appSettings' || (name === 'workloadForms' && !includeWorkloadForms)) continue;
     await collections[name].deleteMany({});
     const records = (db[name] || []).map(item => ({ ...item, _id: mongoDocumentIdFor(name, item) }));
     if (records.length) await collections[name].insertMany(records);
   }
 
-  await metaCollection.replaceOne(
+  const counters = buildMetaFromData(db);
+  await metaCollection.updateOne(
     { _id: 'counters' },
-    { _id: 'counters', ...db.meta, updatedAt: new Date() },
+    {
+      $max: {
+        nextAdminId: Math.max(Number(db.meta?.nextAdminId) || 1, counters.nextAdminId),
+        nextFacultyId: Math.max(Number(db.meta?.nextFacultyId) || 1, counters.nextFacultyId),
+        nextInviteId: Math.max(Number(db.meta?.nextInviteId) || 1, counters.nextInviteId),
+        nextTimetableId: Math.max(Number(db.meta?.nextTimetableId) || 1, counters.nextTimetableId),
+        nextWorkloadFormId: Math.max(Number(db.meta?.nextWorkloadFormId) || 1, counters.nextWorkloadFormId)
+      },
+      $set: { updatedAt: new Date() }
+    },
     { upsert: true }
   );
 }
@@ -199,7 +209,7 @@ async function ensureMetaCounters() {
   await metaCollection.updateOne(
     { _id: 'counters' },
     {
-      $set: {
+      $max: {
         nextAdminId: Math.max(Number(db.meta?.nextAdminId) || 1, buildMetaFromData(db).nextAdminId),
         nextFacultyId: Math.max(Number(db.meta?.nextFacultyId) || 1, buildMetaFromData(db).nextFacultyId),
         nextInviteId: Math.max(Number(db.meta?.nextInviteId) || 1, buildMetaFromData(db).nextInviteId),
@@ -489,6 +499,23 @@ function sanitizeTeacherView(raw) {
 
 function sanitizeAppSettings(raw) {
   const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
+  const sanitizeMapEntries = (value, isValid) => {
+    const entries = Array.isArray(value)
+      ? value.filter(isRecord).map(entry => [entry.key, entry.value])
+      : isRecord(value)
+        ? Object.entries(value)
+        : [];
+    const seen = new Set();
+    return entries.reduce((result, [rawKey, entryValue]) => {
+      const key = String(rawKey || '');
+      if (!key || key === '__proto__' || key === 'constructor' || key === 'prototype' || seen.has(key) || !isValid(entryValue)) {
+        return result;
+      }
+      seen.add(key);
+      result.push({ key, value: entryValue });
+      return result;
+    }, []);
+  };
   const labCatalog = Array.isArray(raw.labCatalog)
     ? raw.labCatalog.filter(lab => isRecord(lab) && String(lab.id || '').trim() && String(lab.name || '').trim()).map(lab => ({
       id: String(lab.id).trim(),
@@ -502,20 +529,11 @@ function sanitizeAppSettings(raw) {
       createdAt: String(lab.createdAt || '')
     }))
     : [];
-  const lectureCounts = isRecord(raw.manageFormLectureCounts) ? Object.fromEntries(
-    Object.entries(raw.manageFormLectureCounts).filter(([key, value]) => (
-      !key.startsWith('$') && !key.includes('.') &&
-      (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value)))
-    ))
-  ) : {};
-  const subjectSelections = isRecord(raw.manageFormSubjectSelections) ? Object.fromEntries(
-    Object.entries(raw.manageFormSubjectSelections).filter(([key, value]) => (
-      !key.startsWith('$') && !key.includes('.') && typeof value === 'boolean'
-    ))
-  ) : {};
-  const labTimetable = isRecord(raw.labTimetable)
-    ? Object.fromEntries(Object.entries(raw.labTimetable).filter(([key]) => !key.startsWith('$') && !key.includes('.')))
-    : {};
+  const lectureCounts = sanitizeMapEntries(raw.manageFormLectureCounts, value => (
+    typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
+  ));
+  const subjectSelections = sanitizeMapEntries(raw.manageFormSubjectSelections, value => typeof value === 'boolean');
+  const labTimetable = sanitizeMapEntries(raw.labTimetable, value => value !== undefined);
 
   return {
     id: 'global',
@@ -1207,12 +1225,27 @@ async function submitWorkloadForm(req, res, db, form) {
   if (!selectedSubjects.length) return send(res, 400, { error: 'Select at least one subject before submitting' });
   if (selectedSubjects.length !== subjectIds.length) return send(res, 400, { error: 'The selection contains an invalid subject' });
 
-  form.selectedSubjectIds = selectedSubjects.map(subject => subject.id);
-  form.selectedSubjects = selectedSubjects;
-  form.status = 'submitted';
-  form.submittedAt = new Date().toISOString();
-  await writeDb(db);
-  return send(res, 200, { ok: true, submittedAt: form.submittedAt });
+  const submittedAt = new Date().toISOString();
+  const update = await collections.workloadForms.updateOne(
+    { _id: form.id, status: 'pending' },
+    {
+      $set: {
+        selectedSubjectIds: selectedSubjects.map(subject => subject.id),
+        selectedSubjects,
+        status: 'submitted',
+        submittedAt
+      }
+    }
+  );
+  if (!update.matchedCount) return send(res, 409, { error: 'This workload form has already been submitted' });
+
+  Object.assign(form, {
+    selectedSubjectIds: selectedSubjects.map(subject => subject.id),
+    selectedSubjects,
+    status: 'submitted',
+    submittedAt
+  });
+  return send(res, 200, { ok: true, submittedAt });
 }
 
 async function createWorkloadForm(req, res, db) {
@@ -1230,8 +1263,17 @@ async function createWorkloadForm(req, res, db) {
     return send(res, 400, { error: 'Subject IDs must be unique' });
   }
 
+  const counter = await metaCollection.findOneAndUpdate(
+    { _id: 'counters' },
+    { $inc: { nextWorkloadFormId: 1 } },
+    { returnDocument: 'before', includeResultMetadata: false }
+  );
+  if (!counter || !Number.isInteger(Number(counter.nextWorkloadFormId))) {
+    throw new Error('Workload form ID counter is unavailable');
+  }
+
   const form = {
-    id: db.meta.nextWorkloadFormId++,
+    id: Number(counter.nextWorkloadFormId),
     facultyId: faculty.id,
     facultyName: faculty.name,
     facultyEmail: faculty.email,
@@ -1242,15 +1284,21 @@ async function createWorkloadForm(req, res, db) {
     status: 'pending',
     token: crypto.randomBytes(32).toString('hex'),
     createdAt: new Date().toISOString(),
-    submittedAt: ''
+    submittedAt: '',
+    emailSent: false,
+    emailError: ''
   };
+  await collections.workloadForms.insertOne({ ...form, _id: form.id });
+
   const formLink = buildWorkloadFormLink(req, form.token);
   const email = buildWorkloadFormEmail(form, formLink);
   const mailResult = await sendGmailMessage(faculty.email, 'Faculty workload subject selection', email.text, email.html);
   form.emailSent = mailResult.sent;
   form.emailError = mailResult.sent ? '' : mailResult.error;
-  db.workloadForms.push(form);
-  await writeDb(db);
+  await collections.workloadForms.updateOne(
+    { _id: form.id },
+    { $set: { emailSent: form.emailSent, emailError: form.emailError } }
+  );
   const publicForm = { ...form };
   delete publicForm.token;
   return send(res, 201, { form: publicForm, emailSent: mailResult.sent, emailError: mailResult.error || '' });
@@ -1321,9 +1369,25 @@ async function assignWorkloadSubjectSections(req, res, db, match) {
   if (sections.some(section => !validSections.has(section))) {
     return send(res, 400, { error: 'Invalid section selection' });
   }
+  const update = await collections.workloadForms.updateOne(
+    { _id: form.id, 'selectedSubjects.id': subjectId },
+    { $set: { 'selectedSubjects.$[selected].assignedSections': sections } },
+    { arrayFilters: [{ 'selected.id': subjectId }] }
+  );
+  if (!update.matchedCount) return send(res, 404, { error: 'Faculty has not selected this subject' });
   selectedSubject.assignedSections = sections;
-  await writeDb(db);
   return send(res, 200, { ok: true, assignedSections: sections });
+}
+
+function publicAppSettings(raw) {
+  const settings = sanitizeAppSettings(raw);
+  const entriesToMap = entries => Object.fromEntries(entries.map(({ key, value }) => [key, value]));
+  return {
+    ...settings,
+    labTimetable: entriesToMap(settings.labTimetable),
+    manageFormLectureCounts: entriesToMap(settings.manageFormLectureCounts),
+    manageFormSubjectSelections: entriesToMap(settings.manageFormSubjectSelections)
+  };
 }
 
 async function handleWorkloadForms(req, res, pathname) {
@@ -1357,7 +1421,7 @@ async function handleAppSettings(req, res, pathname) {
   if (routeKey(req.method, pathname) === 'GET /api/app-settings') {
     if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
     const settings = await collections.appSettings.findOne({ _id: 'global' }, { projection: { _id: 0 } });
-    return send(res, 200, { settings: settings ? stripMongoId(settings) : null });
+    return send(res, 200, { settings: settings ? publicAppSettings(stripMongoId(settings)) : null });
   }
 
   if (routeKey(req.method, pathname) === 'PUT /api/app-settings') {
@@ -1381,7 +1445,7 @@ async function handleAppSettings(req, res, pathname) {
       { _id: 'global', ...settings },
       { upsert: true }
     );
-    return send(res, 200, { settings });
+    return send(res, 200, { settings: publicAppSettings(settings) });
   }
 
   return notFound(res);
@@ -1440,3 +1504,5 @@ if (require.main === module) {
 
 module.exports = handleRequest;
 module.exports.resolveMongoConfig = resolveMongoConfig;
+module.exports.sanitizeAppSettings = sanitizeAppSettings;
+module.exports.publicAppSettings = publicAppSettings;

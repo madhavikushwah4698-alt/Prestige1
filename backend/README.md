@@ -36,6 +36,8 @@ Email delivery requires `GMAIL_USER` and `GMAIL_APP_PASSWORD`. Set `APP_ORIGIN` 
 
 The dashboard's **Generate from Workload** action uses submitted faculty subject selections and the weekly lecture/lab counts from **Manage Form**. It generates only assignments whose faculty-subject pair has been assigned to the currently selected section in **Manage Workload**, randomizes eligible days and slots between subjects, and schedules each faculty member for a subject at most once per day.
 
+Manage Form counts, subject choices, and lab timetable settings are saved in MongoDB's singleton `appSettings` document and loaded when an admin signs in. Dotted subject/course keys are stored as key-value entries so MongoDB does not interpret them as nested field paths. Forwarded forms, each faculty member's submitted subject IDs, and section assignments are stored in `workloadForms`; Manage Workload fetches those records from MongoDB. Workload updates target the affected form, so an unrelated app-data save cannot replace the workload collection.
+
 Default admin login:
 
 ```text
@@ -65,6 +67,12 @@ POST   /api/timetables
 PATCH  /api/timetables/:id
 GET    /api/app-settings
 PUT    /api/app-settings
+GET    /api/workload-forms
+POST   /api/workload-forms
+GET    /api/workload-forms/faculty
+POST   /api/workload-forms/:id/faculty-submit
+POST   /api/workload-forms/:token/submit
+PATCH  /api/workload-forms/:id/subjects/:subjectId/sections
 ```
 
 Protected endpoints need:
