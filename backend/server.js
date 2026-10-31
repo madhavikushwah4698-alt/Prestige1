@@ -62,6 +62,7 @@ let mongoDb;
 let collections;
 let metaCollection;
 let dbConnectionPromise;
+const databaseSnapshots = new WeakMap();
 
 function loadSeedDb() {
   if (fs.existsSync(SEED_DB_PATH)) {
@@ -102,9 +103,10 @@ async function connectDb() {
     const hasCollectionData = await hasDocumentData();
     if (!hasCollectionData) {
       const legacyState = await mongoDb.collection(MONGODB_STATE_COLLECTION).findOne({ _id: STATE_DOCUMENT_ID });
-      await writeDb(legacyState?.state || loadSeedDb(), { includeWorkloadForms: true });
+      await writeDb(legacyState?.state || loadSeedDb());
     }
 
+    await ensureMetaCounters();
     await ensureDemoAdmin();
   })();
 
@@ -125,16 +127,66 @@ async function readDb() {
 
   const metaDocument = await metaCollection.findOne({ _id: 'counters' }, { projection: { _id: 0 } });
   db.meta = metaDocument || buildMetaFromData(db);
+  databaseSnapshots.set(db, Object.fromEntries(
+    COLLECTION_NAMES
+      .filter(name => name !== 'appSettings')
+      .map(name => [name, snapshotCollection(name, db[name])])
+  ));
   return db;
 }
 
-async function writeDb(db, { includeWorkloadForms = false } = {}) {
-  for (const name of COLLECTION_NAMES) {
-    if (name === 'appSettings' || (name === 'workloadForms' && !includeWorkloadForms)) continue;
-    await collections[name].deleteMany({});
-    const records = (db[name] || []).map(item => ({ ...item, _id: mongoDocumentIdFor(name, item) }));
-    if (records.length) await collections[name].insertMany(records);
+function snapshotCollection(collectionName, records) {
+  return new Map((records || []).map(item => [
+    mongoDocumentIdFor(collectionName, item),
+    JSON.stringify(item)
+  ]));
+}
+
+function buildCollectionDiff(collectionName, records, baseline = new Map()) {
+  const current = new Map();
+  for (const item of records || []) {
+    current.set(mongoDocumentIdFor(collectionName, item), item);
   }
+
+  const operations = [];
+  for (const [id, item] of current) {
+    if (JSON.stringify(item) === baseline.get(id)) continue;
+    operations.push({
+      replaceOne: {
+        filter: { _id: id },
+        replacement: { ...item, _id: id },
+        upsert: true
+      }
+    });
+  }
+  const removedIds = [...baseline.keys()].filter(id => !current.has(id));
+  return { operations, removedIds };
+}
+
+function mergeRecordsById(existingRecords, incomingRecords) {
+  const records = new Map((existingRecords || []).map(item => [item.id, item]));
+  for (const item of incomingRecords || []) {
+    if (item && item.id !== undefined && item.id !== null) {
+      records.set(item.id, { ...records.get(item.id), ...item });
+    }
+  }
+  return [...records.values()];
+}
+
+async function writeDb(db) {
+  const baseline = databaseSnapshots.get(db) || {};
+  for (const name of COLLECTION_NAMES) {
+    if (name === 'appSettings') continue;
+    const { operations, removedIds } = buildCollectionDiff(name, db[name], baseline[name]);
+    if (operations.length) await collections[name].bulkWrite(operations, { ordered: false });
+    if (removedIds.length) await collections[name].deleteMany({ _id: { $in: removedIds } });
+  }
+
+  databaseSnapshots.set(db, Object.fromEntries(
+    COLLECTION_NAMES
+      .filter(name => name !== 'appSettings')
+      .map(name => [name, snapshotCollection(name, db[name])])
+  ));
 
   const counters = buildMetaFromData(db);
   await metaCollection.updateOne(
@@ -151,6 +203,19 @@ async function writeDb(db, { includeWorkloadForms = false } = {}) {
     },
     { upsert: true }
   );
+}
+
+async function nextDatabaseId(counterName) {
+  const counter = await metaCollection.findOneAndUpdate(
+    { _id: 'counters' },
+    { $inc: { [counterName]: 1 } },
+    { returnDocument: 'before', includeResultMetadata: false }
+  );
+  const id = Number(counter?.[counterName]);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw new Error(`Database counter "${counterName}" is unavailable`);
+  }
+  return id;
 }
 
 async function hasDocumentData() {
@@ -240,7 +305,9 @@ function mongoDocumentIdFor(collectionName, item) {
       item.code || ''
     ].join('|').toLowerCase();
   }
-  if (collectionName === 'history') return item.id || crypto.randomUUID();
+  if (collectionName === 'history') {
+    return item.id || crypto.createHash('sha256').update(JSON.stringify(item)).digest('hex');
+  }
   if (collectionName === 'teacherViews') return item.id || (item.facultyId ? `faculty-${item.facultyId}` : `teacher-${item.normalizedTeacherName || crypto.randomUUID()}`);
   return crypto.randomUUID();
 }
@@ -788,7 +855,7 @@ async function handleFaculty(req, res, pathname) {
 
     const statusToken = crypto.randomBytes(32).toString('hex');
     const faculty = {
-      id: db.meta.nextFacultyId++,
+      id: await nextDatabaseId('nextFacultyId'),
       name: String(body.name).trim(),
       dept: String(body.dept).trim(),
       empid: String(body.empid).trim(),
@@ -875,7 +942,7 @@ async function handleInvites(req, res, pathname) {
     }
 
     const invite = {
-      id: db.meta.nextInviteId++,
+      id: await nextDatabaseId('nextInviteId'),
       email,
       inviteCode: crypto.randomBytes(16).toString('hex'),
       status: 'pending',
@@ -922,7 +989,7 @@ async function handleAdmins(req, res, pathname) {
     }
 
     const admin = {
-      id: db.meta.nextAdminId++,
+      id: await nextDatabaseId('nextAdminId'),
       name: String(body.name).trim(),
       email,
       passwordHash: hashPassword(body.password),
@@ -948,10 +1015,12 @@ async function handleTimetables(req, res, pathname) {
   if (routeKey(req.method, pathname) === 'PUT /api/timetables') {
     if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
     const body = await parseBody(req);
-    db.timetables = Array.isArray(body.timetables) ? body.timetables.map(item => ({
+    const now = new Date().toISOString();
+    const incoming = Array.isArray(body.timetables) ? body.timetables.map(item => ({
       ...item,
-      updatedAt: new Date().toISOString()
+      updatedAt: now
     })) : [];
+    db.timetables = mergeRecordsById(db.timetables, incoming);
     await writeDb(db);
     return send(res, 200, { timetables: db.timetables });
   }
@@ -960,7 +1029,7 @@ async function handleTimetables(req, res, pathname) {
     if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
     const body = await parseBody(req);
     const timetable = {
-      id: db.meta.nextTimetableId++,
+      id: await nextDatabaseId('nextTimetableId'),
       course: String(body.course || '').trim(),
       semester: String(body.semester || '').trim(),
       section: String(body.section || '').trim(),
@@ -1506,3 +1575,6 @@ module.exports = handleRequest;
 module.exports.resolveMongoConfig = resolveMongoConfig;
 module.exports.sanitizeAppSettings = sanitizeAppSettings;
 module.exports.publicAppSettings = publicAppSettings;
+module.exports.buildCollectionDiff = buildCollectionDiff;
+module.exports.snapshotCollection = snapshotCollection;
+module.exports.mergeRecordsById = mergeRecordsById;

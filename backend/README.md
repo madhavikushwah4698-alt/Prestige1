@@ -38,6 +38,10 @@ The dashboard's **Generate from Workload** action uses submitted faculty subject
 
 Manage Form counts, subject choices, and lab timetable settings are saved in MongoDB's singleton `appSettings` document and loaded when an admin signs in. Dotted subject/course keys are stored as key-value entries so MongoDB does not interpret them as nested field paths. Forwarded forms, each faculty member's submitted subject IDs, and section assignments are stored in `workloadForms`; Manage Workload fetches those records from MongoDB. Workload updates target the affected form, so an unrelated app-data save cannot replace the workload collection.
 
+Collection writes apply only changed, added, or explicitly removed records; unrelated records are not deleted and rewritten during a save. Database-backed IDs use atomic MongoDB counters, and workload submissions and section assignments update their specific form document. This keeps independent sections' updates from overwriting one another and makes refreshed views load the saved database state.
+
+The timetable bulk-save endpoint merges records by ID, preserving other courses/sections and fields not included in a partial update.
+
 Default admin login:
 
 ```text

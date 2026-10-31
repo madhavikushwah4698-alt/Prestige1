@@ -680,26 +680,6 @@ let nextId = 3;
             return null;
         }
 
-        function startManageFacultyAutoRefresh() {
-            // Stop any existing interval
-            stopManageFacultyAutoRefresh();
-            // Auto-refresh every 1 second for immediate visibility
-            manageFacultyRefreshInterval = setInterval(() => {
-                if (document.getElementById("panel-manage")?.classList.contains("active")) {
-                    renderManageFaculty();
-                }
-            }, 1000);
-            console.log('Auto-refresh started for Manage Faculty panel');
-        }
-        
-        function stopManageFacultyAutoRefresh() {
-            if (manageFacultyRefreshInterval) {
-                clearInterval(manageFacultyRefreshInterval);
-                manageFacultyRefreshInterval = null;
-                console.log('Auto-refresh stopped for Manage Faculty panel');
-            }
-        }
-
         function setLoginRole(role) {
             if (inviteRegistrationMode && role === 'admin') role = 'faculty';
             loginRole = role;
@@ -981,20 +961,43 @@ let nextId = 3;
         }
 
         let manageFacultyRefreshInterval = null;
+        let manageFacultyRefreshInFlight = false;
+        let viewFacultyRefreshInterval = null;
+        let viewFacultyRefreshInFlight = false;
         
         function startManageFacultyAutoRefresh() {
             stopManageFacultyAutoRefresh();
             manageFacultyRefreshInterval = setInterval(() => {
-                if (document.getElementById("panel-manage")?.classList.contains("active")) {
-                    renderManageFaculty();
+                if (document.getElementById("panel-manage")?.classList.contains("active") && !manageFacultyRefreshInFlight) {
+                    manageFacultyRefreshInFlight = true;
+                    void renderManageFaculty().finally(() => {
+                        manageFacultyRefreshInFlight = false;
+                    });
                 }
-            }, 1000);
+            }, 2000);
         }
         
         function stopManageFacultyAutoRefresh() {
             if (manageFacultyRefreshInterval) {
                 clearInterval(manageFacultyRefreshInterval);
                 manageFacultyRefreshInterval = null;
+            }
+        }
+
+        function startViewFacultyAutoRefresh() {
+            stopViewFacultyAutoRefresh();
+            void refreshViewFaculty();
+            viewFacultyRefreshInterval = setInterval(() => {
+                if (document.getElementById("panel-add-faculty")?.classList.contains("active")) {
+                    void refreshViewFaculty();
+                }
+            }, 3000);
+        }
+
+        function stopViewFacultyAutoRefresh() {
+            if (viewFacultyRefreshInterval) {
+                clearInterval(viewFacultyRefreshInterval);
+                viewFacultyRefreshInterval = null;
             }
         }
 
@@ -1012,29 +1015,14 @@ let nextId = 3;
             } else {
                 stopManageFacultyAutoRefresh();
             }
+            if (which !== "add-faculty") stopViewFacultyAutoRefresh();
             if (which === "manage-admin") {
                 loadAdminsFromApi();
                 renderManageAdmin();
                 renderInvitationsStatus();  // Show invitation status
             }
             if (which === "add-faculty") {
-                void loadFacultyFromApi().then(loaded => {
-                    if (!loaded) {
-                        const errorMessage = document.getElementById('view-faculty-load-error');
-                        if (errorMessage) {
-                            errorMessage.textContent = 'Faculty list could not be loaded from the database. Check the backend connection and try again.';
-                            errorMessage.classList.add('show');
-                        }
-                        return;
-                    }
-                    const errorMessage = document.getElementById('view-faculty-load-error');
-                    if (errorMessage) {
-                        errorMessage.textContent = '';
-                        errorMessage.classList.remove('show');
-                    }
-                    syncApprovedFacultyNamesToTeacherRoster();
-                    renderTeachers(document.getElementById('teacherSearch')?.value || '');
-                });
+                startViewFacultyAutoRefresh();
             }
             if (which === "manage-lab") {
                 renderManageLabs();
@@ -1182,6 +1170,40 @@ let nextId = 3;
         </div>`;
                     allList.appendChild(row);
                 });
+            }
+        }
+
+        async function refreshViewFaculty() {
+            if (!apiToken || apiRole !== 'admin' || viewFacultyRefreshInFlight) return false;
+            viewFacultyRefreshInFlight = true;
+            const errorMessage = document.getElementById('view-faculty-load-error');
+            try {
+                const [facultyPayload, settingsPayload] = await Promise.all([
+                    apiRequest('/api/faculty'),
+                    apiRequest('/api/app-settings')
+                ]);
+                facultyDB = facultyPayload.faculty || [];
+                const settings = settingsPayload.settings || {};
+                manualTeacherRoster = Array.isArray(settings.teacherRoster)
+                    ? [...new Set(settings.teacherRoster.map(name => String(name || '').trim()).filter(Boolean))]
+                    : [];
+                syncApprovedFacultyNamesToTeacherRoster();
+                renderTeachers(document.getElementById('teacherSearch')?.value || '');
+                if (errorMessage) {
+                    errorMessage.textContent = '';
+                    errorMessage.classList.remove('show');
+                }
+                return true;
+            } catch (error) {
+                console.warn('View Faculty records could not be refreshed from MongoDB:', error);
+                if (error.status === 401) setApiSession('', '');
+                if (errorMessage) {
+                    errorMessage.textContent = 'Faculty list could not be refreshed from the database. Check the connection and retry.';
+                    errorMessage.classList.add('show');
+                }
+                return false;
+            } finally {
+                viewFacultyRefreshInFlight = false;
             }
         }
 
