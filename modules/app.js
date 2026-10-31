@@ -325,6 +325,9 @@ let nextId = 3;
         let currentFacultyId = null;
         let currentFaculty = null;
         let currentInviteCode = null;
+        let pendingFacultyStatusToken = '';
+        let pendingFacultyStatusTimer = null;
+        let pendingFacultyRecord = null;
         let inviteRegistrationMode = (() => {
             try {
                 return sessionStorage.getItem('prestigeInviteFacultyMode') === 'true';
@@ -842,6 +845,8 @@ let nextId = 3;
                     body: { name, dept, empid, email, password, inviteCode: currentInviteCode }
                 });
                 const record = result.faculty;
+                pendingFacultyStatusToken = result.statusToken || '';
+                pendingFacultyRecord = record;
                 facultyDB.push(record);
                 if (currentInviteCode) {
                     await loadInvitesFromApi();
@@ -852,6 +857,7 @@ let nextId = 3;
                 renderManageFaculty();
                 startManageFacultyAutoRefresh();
                 showPendingScreen("pending", record);
+                startPendingFacultyStatusChecks();
                 return;
             } catch (error) {
                 errBox.textContent = error.network ? 'Backend unavailable. Registration was not saved.' : (error.message || 'Unable to submit registration.');
@@ -866,16 +872,81 @@ let nextId = 3;
             const stampText = document.getElementById("pending-stamp-text");
             const title = document.getElementById("pending-title");
             const text = document.getElementById("pending-text");
+            const action = document.getElementById("pending-login-button");
+            const statusNote = document.getElementById("pending-status-note");
+            pendingFacultyRecord = record;
 
             stamp.classList.remove("approved");
             if (kind === "pending") {
                 stampText.innerHTML = "PENDING<br>REVIEW";
                 title.textContent = "Request received";
                 text.textContent = `Hi ${record.name.split(' ')[0]}, your registration has been sent to the admin office. You'll be able to sign in as soon as it's approved.`;
+                statusNote.textContent = "We'll automatically check for approval every few seconds.";
+                action.textContent = "Back to sign in";
+            } else if (kind === "approved") {
+                stamp.classList.add("approved");
+                stampText.textContent = "ACCESS GRANTED";
+                title.textContent = "Your faculty access is approved";
+                text.textContent = `Hi ${record.name.split(' ')[0]}, your account is ready. Sign in with the email and password you registered with.`;
+                statusNote.textContent = "";
+                action.textContent = "Sign in now";
             } else {
                 stampText.innerHTML = "NOT<br>APPROVED";
                 title.textContent = "Access not granted";
                 text.textContent = "The admin office did not approve this registration. Contact the registrar for details.";
+                statusNote.textContent = "";
+                action.textContent = "Back to sign in";
+            }
+        }
+
+        function continueFromPendingScreen() {
+            const email = pendingFacultyRecord?.email || '';
+            showScreen("login");
+            setLoginRole("faculty");
+            document.getElementById("login-email").value = email;
+        }
+
+        function stopPendingFacultyStatusChecks() {
+            if (pendingFacultyStatusTimer) {
+                clearTimeout(pendingFacultyStatusTimer);
+                pendingFacultyStatusTimer = null;
+            }
+            pendingFacultyStatusToken = '';
+        }
+
+        async function checkPendingFacultyStatus() {
+            if (!pendingFacultyStatusToken || !document.getElementById("screen-pending").classList.contains("active")) {
+                stopPendingFacultyStatusChecks();
+                return;
+            }
+
+            try {
+                const result = await apiRequest('/api/faculty/status', {
+                    method: 'POST',
+                    auth: false,
+                    body: { statusToken: pendingFacultyStatusToken }
+                });
+                pendingFacultyRecord = result.faculty;
+                document.getElementById("pending-status-note").textContent =
+                    "We'll automatically check for approval every few seconds.";
+                if (result.faculty.status === 'approved' || result.faculty.status === 'rejected') {
+                    stopPendingFacultyStatusChecks();
+                    showPendingScreen(result.faculty.status, result.faculty);
+                    return;
+                }
+            } catch (error) {
+                console.warn('Faculty approval status could not be checked; retrying shortly:', error.message);
+                document.getElementById("pending-status-note").textContent =
+                    "Unable to check right now. We'll retry automatically.";
+            }
+
+            pendingFacultyStatusTimer = setTimeout(checkPendingFacultyStatus, 3000);
+        }
+
+        function startPendingFacultyStatusChecks() {
+            stopPendingFacultyStatusChecks();
+            if (pendingFacultyStatusToken) {
+                void checkPendingFacultyStatus();
             }
         }
 

@@ -264,7 +264,8 @@
                 <h2 id="pending-title">Request received</h2>
                 <p id="pending-text">Your registration has been sent to the admin office. You'll be able to sign in as
                     soon as it's approved.</p>
-                <button class="btn btn-ghost" style="width:auto; padding:11px 26px;" onclick="showScreen('login')">Back
+                <p id="pending-status-note" aria-live="polite">We'll automatically check for approval every few seconds.</p>
+                <button class="btn btn-ghost" id="pending-login-button" style="width:auto; padding:11px 26px;" onclick="continueFromPendingScreen()">Back
                     to sign in</button>
             </div>
         </div>

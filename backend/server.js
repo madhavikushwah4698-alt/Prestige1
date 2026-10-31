@@ -734,6 +734,18 @@ async function handleFaculty(req, res, pathname) {
     return send(res, 200, { faculty: db.faculty.map(publicFaculty) });
   }
 
+  if (routeKey(req.method, pathname) === 'POST /api/faculty/status') {
+    const body = await parseBody(req);
+    const statusToken = String(body.statusToken || '');
+    if (!/^[a-f0-9]{64}$/i.test(statusToken)) {
+      return send(res, 400, { error: 'Invalid status token' });
+    }
+    const statusTokenHash = crypto.createHash('sha256').update(statusToken).digest('hex');
+    const faculty = db.faculty.find(item => item.statusTokenHash === statusTokenHash);
+    if (!faculty) return send(res, 404, { error: 'Faculty registration status not found' });
+    return send(res, 200, { faculty: publicFaculty(faculty) });
+  }
+
   if (routeKey(req.method, pathname) === 'POST /api/faculty/signup') {
     const body = await parseBody(req);
     const missing = requireFields(body, ['name', 'dept', 'empid', 'email', 'password']);
@@ -756,6 +768,7 @@ async function handleFaculty(req, res, pathname) {
       invitedBy = true;
     }
 
+    const statusToken = crypto.randomBytes(32).toString('hex');
     const faculty = {
       id: db.meta.nextFacultyId++,
       name: String(body.name).trim(),
@@ -763,6 +776,7 @@ async function handleFaculty(req, res, pathname) {
       empid: String(body.empid).trim(),
       email,
       passwordHash: hashPassword(body.password),
+      statusTokenHash: crypto.createHash('sha256').update(statusToken).digest('hex'),
       status: 'pending',
       appliedOn: todayLabel(),
       invitedBy,
@@ -771,7 +785,7 @@ async function handleFaculty(req, res, pathname) {
 
     db.faculty.push(faculty);
     await writeDb(db);
-    return send(res, 201, { faculty: publicFaculty(faculty) });
+    return send(res, 201, { faculty: publicFaculty(faculty), statusToken });
   }
 
   const approveMatch = pathname.match(/^\/api\/faculty\/(\d+)\/approve$/);
