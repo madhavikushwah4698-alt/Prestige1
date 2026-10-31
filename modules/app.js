@@ -5720,9 +5720,9 @@ let nextId = 3;
         <div class="page-frame" id="page-frame">
             <main class="paper" id="paper">
                 <div class="print-header">
+                    <div class="print-timestamp">Printed: <time id="print-timestamp"></time></div>
                     <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Prestige Institute of Engineering Management &amp; Research, Indore</div>
                     <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Department of Computer Science &amp; Engineering</div>
-                    <div class="print-timestamp">Printed: <time id="print-timestamp"></time></div>
                 </div>
                 <div class="print-heading">
                     Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}
