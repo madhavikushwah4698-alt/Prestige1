@@ -5591,8 +5591,17 @@ let nextId = 3;
     <style>
         @page { size: A4 landscape; margin: 0.35in; }
         * { box-sizing: border-box; }
-        html, body { width: auto; min-width: 0; margin: 0; padding: 0; }
-        body { font-family: Inter, Arial, sans-serif; color: #111827; font-size: 12px; }
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; }
+        body { overflow: hidden; background: #525659; font-family: Inter, Arial, sans-serif; color: #111827; font-size: 12px; }
+        .preview-toolbar { position: fixed; z-index: 2; inset: 0 0 auto; height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 18px; background: #202124; color: #fff; font: 14px Arial, sans-serif; box-shadow: 0 2px 6px #0005; }
+        .preview-toolbar .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .preview-toolbar button { min-width: 40px; height: 34px; padding: 0 12px; border: 1px solid #5f6368; border-radius: 5px; background: #303134; color: #fff; font: inherit; cursor: pointer; }
+        .preview-toolbar button:hover { background: #3c4043; }
+        .preview-toolbar .print-button { border-color: #8ab4f8; background: #8ab4f8; color: #202124; font-weight: 700; }
+        .zoom-label { min-width: 54px; text-align: center; }
+        .preview-workspace { position: absolute; inset: 56px 0 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 22px; }
+        .page-frame { position: relative; flex: 0 0 auto; }
+        .paper { position: absolute; top: 0; left: 0; width: 1123px; min-height: 794px; padding: 34px; overflow: visible; transform-origin: top left; background: #fff; box-shadow: 0 2px 12px #0008; }
         .print-header { display: grid; justify-items: center; gap: 5px; margin-bottom: 9px; text-align: center; }
         .print-heading { flex: 1; text-align: center; font-weight: 700; font-size: 16px; line-height: 1.25; }
         .print-subheading { font-weight: 600; font-size: 12px; color: #111827; margin-top: 3px; }
@@ -5614,35 +5623,83 @@ let nextId = 3;
         .summary-table { margin-top: 10px; }
         .no-break, .summary-table, .dashboard-timetable-table { page-break-inside: avoid; }
         @media print {
-            html, body { width: auto !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; }
+            html, body { width: auto !important; height: auto !important; min-width: 0 !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; background: #fff !important; }
+            .preview-toolbar { display: none !important; }
+            .preview-workspace { position: static !important; display: block !important; overflow: visible !important; padding: 0 !important; }
+            .page-frame { width: auto !important; height: auto !important; }
+            .paper { position: static !important; width: auto !important; min-height: 0 !important; padding: 0 !important; overflow: visible !important; transform: none !important; box-shadow: none !important; }
             .print-header, .print-heading, .info-line { page-break-inside: avoid; }
             table, .summary-table, tr, th, td { page-break-inside: avoid; }
             .dashboard-timetable-table, .summary-table-container { width: 100% !important; max-width: 100% !important; }
             .dashboard-timetable-table table, .summary-table { width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; table-layout: fixed !important; }
             table th, table td { min-width: 0 !important; padding: 7px 5px !important; font-size: 11px !important; line-height: 1.25 !important; overflow-wrap: anywhere; }
+            .dashboard-timetable-table tbody td { height: 0.72in !important; }
         }
     </style>
 </head>
 <body>
-    <div class="print-header">
-        <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Prestige Institute of Engineering Management &amp; Research, Indore</div>
-        <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Department of Computer Science &amp; Engineering</div>
+    <div class="preview-toolbar">
+        <div class="title">Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}</div>
+        <button type="button" id="fit-page">Fit</button>
+        <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+        <span class="zoom-label" id="zoom-label">100%</span>
+        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" onclick="window.close()">Close</button>
+        <button type="button" class="print-button" onclick="window.print()">Print</button>
     </div>
-    <div class="print-heading">
-        Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}
-        <div class="print-subheading">Academic Session: ${escapeHtml(meta.academicSession || '2025-2026')} | Semester Dates: ${escapeHtml(getDashboardSemesterDateRange(dashboardCourse, sem))}</div>
+    <div class="preview-workspace" id="preview-workspace">
+        <div class="page-frame" id="page-frame">
+            <main class="paper" id="paper">
+                <div class="print-header">
+                    <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Prestige Institute of Engineering Management &amp; Research, Indore</div>
+                    <div style="font-weight:700; font-size:13px; line-height:1.3; text-align:center;">Department of Computer Science &amp; Engineering</div>
+                </div>
+                <div class="print-heading">
+                    Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}
+                    <div class="print-subheading">Academic Session: ${escapeHtml(meta.academicSession || '2025-2026')} | Semester Dates: ${escapeHtml(getDashboardSemesterDateRange(dashboardCourse, sem))}</div>
+                </div>
+                <div class="info-line no-break">
+                    <div>Room: ${escapeHtml(meta.room || 'No rooms assigned')}</div>
+                    <div>Teacher: ${escapeHtml(meta.classTeacher || 'No class teacher assigned')}</div>
+                    <div>Students: ${escapeHtml(meta.studentNumber || 'Not assigned')}</div>
+                </div>
+                <div class="dashboard-timetable-table">
+                    ${table.outerHTML}
+                </div>
+                <div class="summary-table-container" style="margin-top:12px;">
+                    ${summaryHtml}
+                </div>
+            </main>
+        </div>
     </div>
-    <div class="info-line no-break">
-        <div>Room: ${escapeHtml(meta.room || 'No rooms assigned')}</div>
-        <div>Teacher: ${escapeHtml(meta.classTeacher || 'No class teacher assigned')}</div>
-        <div>Students: ${escapeHtml(meta.studentNumber || 'Not assigned')}</div>
-    </div>
-    <div class="dashboard-timetable-table">
-        ${table.outerHTML}
-    </div>
-    <div class="summary-table-container" style="margin-top:12px;">
-        ${summaryHtml}
-    </div>
+    <script>
+        (() => {
+            const workspace = document.getElementById('preview-workspace');
+            const frame = document.getElementById('page-frame');
+            const paper = document.getElementById('paper');
+            const zoomLabel = document.getElementById('zoom-label');
+            const pageWidth = 1123;
+            const pageHeight = () => Math.max(794, paper.scrollHeight);
+            let zoom = 1;
+            function applyZoom() {
+                paper.style.transform = 'scale(' + zoom + ')';
+                frame.style.width = (pageWidth * zoom) + 'px';
+                frame.style.height = (pageHeight() * zoom) + 'px';
+                zoomLabel.textContent = Math.round(zoom * 100) + '%';
+            }
+            function fitPage() {
+                zoom = Math.min((workspace.clientWidth - 44) / pageWidth, (workspace.clientHeight - 44) / pageHeight(), 1.5);
+                zoom = Math.max(0.25, zoom);
+                applyZoom();
+            }
+            document.getElementById('fit-page').addEventListener('click', fitPage);
+            document.getElementById('zoom-in').addEventListener('click', () => { zoom = Math.min(2.5, zoom + 0.1); applyZoom(); });
+            document.getElementById('zoom-out').addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.1); applyZoom(); });
+            window.addEventListener('resize', fitPage);
+            document.fonts.ready.then(fitPage);
+            fitPage();
+        })();
+    </script>
 </body>
 </html>`;
 
@@ -5660,17 +5717,7 @@ let nextId = 3;
                 printWindow.resizeTo(window.screen.availWidth, window.screen.availHeight);
                 printWindow.document.write(printHtml);
                 printWindow.document.close();
-                await printWindow.document.fonts.ready;
-                await new Promise(resolve => {
-                    printWindow.requestAnimationFrame(() => printWindow.requestAnimationFrame(resolve));
-                });
                 printWindow.focus();
-                printWindow.addEventListener('afterprint', () => {
-                    if (!printWindow.closed) {
-                        printWindow.close();
-                    }
-                });
-                printWindow.print();
             } catch (error) {
                 console.error('Print failed', error);
                 alert('Unable to print timetable.');
