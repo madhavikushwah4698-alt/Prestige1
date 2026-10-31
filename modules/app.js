@@ -5604,15 +5604,15 @@ let nextId = 3;
         .paper { position: absolute; top: 0; left: 0; width: 1123px; min-height: 794px; padding: 34px; overflow: visible; transform-origin: top left; background: #fff; box-shadow: 0 2px 12px #0008; }
         .paper.grayscale { filter: grayscale(1); }
         .paper.no-backgrounds th, .paper.no-backgrounds [style*="background"] { background: transparent !important; }
-        .settings-panel { position: fixed; z-index: 1; top: 56px; right: 0; bottom: 0; width: 310px; overflow: auto; padding: 18px; background: #f8f9fa; color: #202124; font: 14px Arial, sans-serif; box-shadow: -2px 0 8px #0003; }
+        .settings-panel { position: fixed; z-index: 1; top: 56px; right: 0; bottom: 0; width: 310px; overflow: auto; padding: 18px; background: #000; color: #fff; font: 14px Arial, sans-serif; box-shadow: -2px 0 8px #0008; }
         .settings-panel h2 { margin: 0 0 18px; font-size: 18px; }
         .setting-field { display: grid; gap: 7px; margin-bottom: 16px; }
         .setting-field label, .settings-panel summary { font-weight: 600; }
-        .settings-panel select { width: 100%; height: 38px; padding: 0 10px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; color: #202124; font: inherit; }
-        .settings-panel details { padding-top: 12px; border-top: 1px solid #dadce0; }
+        .settings-panel select { width: 100%; height: 38px; padding: 0 10px; border: 1px solid #555; border-radius: 5px; background: #1f1f1f; color: #fff; font: inherit; }
+        .settings-panel details { padding-top: 12px; border-top: 1px solid #444; }
         .settings-panel summary { cursor: pointer; }
         .settings-panel .check-option { display: flex; align-items: center; gap: 9px; margin-top: 14px; font-weight: 400; }
-        .settings-panel input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #1a73e8; }
+        .settings-panel input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #fff; }
         body.settings-hidden .preview-workspace { right: 0; }
         body.settings-hidden .settings-panel { display: none; }
         @media (max-width: 760px) {
