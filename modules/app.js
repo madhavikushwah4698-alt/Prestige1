@@ -5587,7 +5587,7 @@ let nextId = 3;
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}</title>
+    <title>Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel} - Personal</title>
     <style>
         @page { size: A4 landscape; margin: 0.35in; }
         * { box-sizing: border-box; }
