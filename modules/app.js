@@ -5589,7 +5589,7 @@ let nextId = 3;
     <meta charset="utf-8">
     <title>Timetable - ${dashboardCourse} - ${semesterLabel} - ${sectionLabel}</title>
     <style>
-        @page { margin: 0.35in; }
+        @page { size: A4 landscape; margin: 0.35in; }
         * { box-sizing: border-box; }
         html, body { width: auto; min-width: 0; margin: 0; padding: 0; }
         body { font-family: Inter, Arial, sans-serif; color: #111827; font-size: 12px; }
