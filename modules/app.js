@@ -328,6 +328,7 @@ let nextId = 3;
         let pendingFacultyStatusToken = '';
         let pendingFacultyStatusTimer = null;
         let pendingFacultyRecord = null;
+        const PENDING_FACULTY_STATUS_POLL_INTERVAL_MS = 1000;
         let inviteRegistrationMode = (() => {
             try {
                 return sessionStorage.getItem('prestigeInviteFacultyMode') === 'true';
@@ -881,7 +882,7 @@ let nextId = 3;
                 stampText.innerHTML = "PENDING<br>REVIEW";
                 title.textContent = "Request received";
                 text.textContent = `Hi ${record.name.split(' ')[0]}, your registration has been sent to the admin office. You'll be able to sign in as soon as it's approved.`;
-                statusNote.textContent = "We'll automatically check for approval every few seconds.";
+                statusNote.textContent = "Checking for approval automatically.";
                 action.textContent = "Back to sign in";
             } else if (kind === "approved") {
                 stamp.classList.add("approved");
@@ -928,7 +929,7 @@ let nextId = 3;
                 });
                 pendingFacultyRecord = result.faculty;
                 document.getElementById("pending-status-note").textContent =
-                    "We'll automatically check for approval every few seconds.";
+                    "Checking for approval automatically.";
                 if (result.faculty.status === 'approved' || result.faculty.status === 'rejected') {
                     stopPendingFacultyStatusChecks();
                     showPendingScreen(result.faculty.status, result.faculty);
@@ -940,11 +941,14 @@ let nextId = 3;
                     "Unable to check right now. We'll retry automatically.";
             }
 
-            pendingFacultyStatusTimer = setTimeout(checkPendingFacultyStatus, 3000);
+            pendingFacultyStatusTimer = setTimeout(checkPendingFacultyStatus, PENDING_FACULTY_STATUS_POLL_INTERVAL_MS);
         }
 
         function startPendingFacultyStatusChecks() {
-            stopPendingFacultyStatusChecks();
+            if (pendingFacultyStatusTimer) {
+                clearTimeout(pendingFacultyStatusTimer);
+                pendingFacultyStatusTimer = null;
+            }
             if (pendingFacultyStatusToken) {
                 void checkPendingFacultyStatus();
             }
