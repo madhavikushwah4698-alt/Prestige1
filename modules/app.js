@@ -5646,7 +5646,7 @@ let nextId = 3;
 </body>
 </html>`;
 
-                const printWindow = window.open('', '_blank', 'width=1000,height=800');
+                const printWindow = window.open('', '_blank');
                 if (!printWindow) {
                     alert('Unable to open print window.');
                     return;
