@@ -5503,7 +5503,7 @@ let nextId = 3;
             return n ? `Semester ${toRoman(n)}` : '';
         }
 
-        function printDashboardTimetable() {
+        async function printDashboardTimetable() {
             try {
                 const semesterNum = parseInt(dashboardTimetableState.currentSemester.replace('semester', ''), 10) || 0;
                 const sectionLetter = dashboardTimetableState.currentSection.replace('section', '');
@@ -5656,8 +5656,14 @@ let nextId = 3;
                     return;
                 }
 
+                printWindow.moveTo(0, 0);
+                printWindow.resizeTo(window.screen.availWidth, window.screen.availHeight);
                 printWindow.document.write(printHtml);
                 printWindow.document.close();
+                await printWindow.document.fonts.ready;
+                await new Promise(resolve => {
+                    printWindow.requestAnimationFrame(() => printWindow.requestAnimationFrame(resolve));
+                });
                 printWindow.focus();
                 printWindow.addEventListener('afterprint', () => {
                     if (!printWindow.closed) {
