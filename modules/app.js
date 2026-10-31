@@ -5646,7 +5646,11 @@ let nextId = 3;
 </body>
 </html>`;
 
-                const printWindow = window.open('', '_blank');
+                const printWindow = window.open(
+                    '',
+                    '_blank',
+                    `popup=yes,width=${window.screen.availWidth},height=${window.screen.availHeight},left=0,top=0`
+                );
                 if (!printWindow) {
                     alert('Unable to open print window.');
                     return;
