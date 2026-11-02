@@ -1450,10 +1450,20 @@ let nextId = 3;
         }
 
         function getLabSubjectOptions() {
-            return subjectCatalog
-                .filter(item => item?.isLab && item.name)
-                .slice()
-                .sort((a, b) => {
+            const options = subjectCatalog.flatMap(item => {
+                if (!item?.name) return [];
+                if (item.isLab) return [item];
+                if (!item.labEnabled && !/\blab\b/i.test(item.name)) return [];
+                return [{
+                    ...item,
+                    isLab: true
+                }];
+            });
+            const uniqueOptions = Array.from(new Map(
+                options.map(item => [subjectIdentity(item), item])
+            ).values());
+
+            return uniqueOptions.sort((a, b) => {
                     const courseCompare = String(a.course || '').localeCompare(String(b.course || ''));
                     if (courseCompare) return courseCompare;
                     const semesterCompare = String(a.semester || '').localeCompare(String(b.semester || ''));
@@ -1560,10 +1570,17 @@ let nextId = 3;
         }
 
         function getSubjectLabelSet(label) {
-            const labels = new Set([normalizeLabSubjectValue(label)]);
+            const labels = new Set();
+            const addLabel = value => {
+                const normalized = normalizeLabSubjectValue(value);
+                if (!normalized) return;
+                labels.add(normalized);
+                labels.add(normalized.replace(/\s+lab$/i, '').trim());
+            };
+            addLabel(label);
             const parsed = extractSubjectNameAndCodeGlobal(label || '');
-            if (parsed.name) labels.add(normalizeLabSubjectValue(parsed.name));
-            if (parsed.name && parsed.code) labels.add(normalizeLabSubjectValue(`${parsed.name} (${parsed.code})`));
+            if (parsed.name) addLabel(parsed.name);
+            if (parsed.name && parsed.code) addLabel(`${parsed.name} (${parsed.code})`);
             return labels;
         }
 
@@ -1584,14 +1601,10 @@ let nextId = 3;
 
             const labSubjectMatches = [];
             labSubjects.forEach((subject) => {
-                const labels = new Set([normalizeLabSubjectValue(subject.label)]);
-                const parsed = extractSubjectNameAndCodeGlobal(subject.label || '');
-                if (parsed.name) labels.add(normalizeLabSubjectValue(parsed.name));
-                if (parsed.name && parsed.code) labels.add(normalizeLabSubjectValue(`${parsed.name} (${parsed.code})`));
                 labSubjectMatches.push({
                     course: subject.course || 'B.Tech',
                     semester: subject.semester || 'semester1',
-                    labels
+                    labels: getSubjectLabelSet(subject.label || '')
                 });
             });
 
@@ -3172,7 +3185,7 @@ let nextId = 3;
                 if (result.conflicts.length) {
                     showConflictModal(`${message}\nWeekly counts could not be fully met:\n${result.conflicts.join('; ')}`);
                 } else {
-                    alert(`${message} All requested weekly counts were met.`);
+                    showConflictModal(`${message} All requested weekly counts were met.`, 'Timetable Generated');
                 }
             } catch (error) {
                 console.error('Workload-based timetable generation failed:', error);
@@ -3243,6 +3256,37 @@ let nextId = 3;
                 });
 
             return requirementsBySection;
+        }
+
+        function createDashboardLabBatchAssignments(firstRequirement, secondRequirement, sessionIndex) {
+            const orderedRequirements = sessionIndex % 2 === 0
+                ? [firstRequirement, secondRequirement]
+                : [secondRequirement, firstRequirement];
+            return orderedRequirements.map((requirement, index) => ({
+                batch: index === 0 ? 'P1' : 'P2',
+                subject: requirement.subjectCode ? `${requirement.subjectName} (${requirement.subjectCode})` : requirement.subjectName,
+                subjectName: requirement.subjectName || '',
+                subjectCode: requirement.subjectCode || '',
+                teacher: requirement.teacher,
+                room: '',
+                classType: 'Lab'
+            }));
+        }
+
+        function canScheduleDashboardSessionOnDay(daySessionCounts, day, dailyLimit) {
+            return (daySessionCounts.get(day) || 0) < dailyLimit;
+        }
+
+        function hasSameDashboardLabBatchAssignments(firstAssignments, secondAssignments) {
+            const assignmentKey = assignment => [
+                normalizeSubjectValue(assignment.subjectCode || assignment.subjectName || assignment.subject),
+                normalizeTeacherName(assignment.teacher),
+                normalizeSubjectValue(assignment.batch)
+            ].join('|');
+            const firstKeys = firstAssignments.map(assignmentKey).sort();
+            const secondKeys = secondAssignments.map(assignmentKey).sort();
+            return firstKeys.length === secondKeys.length
+                && firstKeys.every((key, index) => key === secondKeys[index]);
         }
 
         function parseTimeRangeToMinutes(range) {
@@ -3564,29 +3608,9 @@ let nextId = 3;
             const periodCount = getDashboardPeriodCount(dashboardCourse);
             const periodTimes = getDashboardPeriodTimes(dashboardCourse);
             const teacherSchedule = {};
-            const teacherSubjectSchedule = new Map();
             const conflicts = [];
             let filledCount = 0;
             const slotDataStore = getDashboardTimetableSlotData(dashboardCourse);
-            const hasDailySubjectAssignment = (teacher, subjectCode, subjectName, day, course, slotSemester, slotSection) => {
-                const teacherDayKey = dashboardTeacherSubjectDayKey(teacher, day, course, slotSemester, slotSection);
-                const subjectCodeKey = normalizeSubjectValue(subjectCode);
-                const subjectNameKey = normalizeSubjectValue(subjectName);
-                return (teacherSubjectSchedule.get(teacherDayKey) || []).some(existing => (
-                    subjectCodeKey && existing.code
-                        ? subjectCodeKey === existing.code
-                        : subjectNameKey === existing.name
-                ));
-            };
-            const addDailySubjectAssignment = (teacher, subjectCode, subjectName, day, course, slotSemester, slotSection) => {
-                const teacherDayKey = dashboardTeacherSubjectDayKey(teacher, day, course, slotSemester, slotSection);
-                const assignments = teacherSubjectSchedule.get(teacherDayKey) || [];
-                assignments.push({
-                    code: normalizeSubjectValue(subjectCode),
-                    name: normalizeSubjectValue(subjectName)
-                });
-                teacherSubjectSchedule.set(teacherDayKey, assignments);
-            };
 
             const timetableCourses = Array.from(new Set([
                 ...Object.keys(dashboardTimetableSlotDataByCourse || {}),
@@ -3602,7 +3626,6 @@ let nextId = 3;
                         const teacherKey = normalizeTeacherName(assignment.teacher);
                         if (!teacherSchedule[teacherKey]) teacherSchedule[teacherKey] = {};
                         teacherSchedule[teacherKey][`${day}-${slotIndex}`] = true;
-                        addDailySubjectAssignment(assignment.teacher, assignment.subjectCode, assignment.subjectName || assignment.subject, day, course, slotSemester, slotSection);
                     });
                 });
             });
@@ -3627,16 +3650,6 @@ let nextId = 3;
                 return expectedCode && code ? expectedCode === code : expectedName === name;
             };
 
-            const makeBatchAssignment = (requirement, batch) => ({
-                batch,
-                subject: requirement.subjectCode ? `${requirement.subjectName} (${requirement.subjectCode})` : requirement.subjectName,
-                subjectName: requirement.subjectName || '',
-                subjectCode: requirement.subjectCode || '',
-                teacher: requirement.teacher,
-                room: '',
-                classType: 'Lab'
-            });
-
             labPairs.forEach(([firstRequirement, secondRequirement]) => {
                 const firstName = normalizeSubjectValue(firstRequirement.subjectCode || firstRequirement.subjectName);
                 const secondName = normalizeSubjectValue(secondRequirement.subjectCode || secondRequirement.subjectName);
@@ -3657,7 +3670,7 @@ let nextId = 3;
                 }
                 if (!required) return;
 
-                const existingSessionDays = new Set();
+                const sessionCountsByDay = new Map();
                 Object.keys(slotDataStore).forEach(key => {
                     const [slotSemester, slotSection, day, slotIndexText] = key.split('|');
                     if (slotSemester !== semester || slotSection !== section) return;
@@ -3670,70 +3683,72 @@ let nextId = 3;
                         const previous = slotDataStore[`${semester}|${section}|${day}|${slotIndex - 1}`];
                         const previousAssignments = getDashboardSlotAssignments(previous);
                         if (previousAssignments.some(item => matchesLabRequirement(item, firstRequirement, previous))
-                            && previousAssignments.some(item => matchesLabRequirement(item, secondRequirement, previous))) return;
+                            && previousAssignments.some(item => matchesLabRequirement(item, secondRequirement, previous))
+                            && hasSameDashboardLabBatchAssignments(assignments, previousAssignments)) return;
                     }
-                    existingSessionDays.add(day);
+                    sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
                 });
-                let assigned = existingSessionDays.size;
+                let assigned = Array.from(sessionCountsByDay.values()).reduce((total, count) => total + count, 0);
 
-                for (const day of shuffledDashboardValues(days)) {
-                    if (assigned >= required) break;
-                    if (hasDailySubjectAssignment(firstRequirement.teacher, firstRequirement.subjectCode, firstRequirement.subjectName, day, dashboardCourse, semester, section)
-                        || hasDailySubjectAssignment(secondRequirement.teacher, secondRequirement.subjectCode, secondRequirement.subjectName, day, dashboardCourse, semester, section)) continue;
-
-                    for (const slotIndex of shuffledDashboardValues(Array.from({ length: periodCount }, (_, index) => index))) {
+                for (const dailyLimit of [1, 2]) {
+                    for (const day of shuffledDashboardValues(days)) {
                         if (assigned >= required) break;
-                        if (hasDailySubjectAssignment(firstRequirement.teacher, firstRequirement.subjectCode, firstRequirement.subjectName, day, dashboardCourse, semester, section)
-                            || hasDailySubjectAssignment(secondRequirement.teacher, secondRequirement.subjectCode, secondRequirement.subjectName, day, dashboardCourse, semester, section)) break;
-                        if (slotIndex >= periodCount - 1
-                            || !isDashboardSlotEmpty(semester, section, day, slotIndex)
-                            || !isDashboardSlotEmpty(semester, section, day, slotIndex + 1)) continue;
+                        if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) continue;
 
-                        const assignments = [
-                            { requirement: firstRequirement, teacher: normalizeTeacherName(firstRequirement.teacher), subject: firstRequirement.subjectCode ? `${firstRequirement.subjectName} (${firstRequirement.subjectCode})` : firstRequirement.subjectName },
-                            { requirement: secondRequirement, teacher: normalizeTeacherName(secondRequirement.teacher), subject: secondRequirement.subjectCode ? `${secondRequirement.subjectName} (${secondRequirement.subjectCode})` : secondRequirement.subjectName }
-                        ];
-                        const unavailable = assignments.some(({ requirement, teacher, subject }) => (
-                            isTeacherAssignedInOtherSection(semester, day, slotIndex, requirement.teacher, section)
-                            || isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, requirement.teacher, section)
-                            || (teacherSchedule[teacher] && (teacherSchedule[teacher][`${day}-${slotIndex}`] || teacherSchedule[teacher][`${day}-${slotIndex + 1}`]))
-                            || findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, subject)
-                            || findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, subject)
-                        ));
-                        if (unavailable) continue;
+                        for (const slotIndex of shuffledDashboardValues(Array.from({ length: periodCount }, (_, index) => index))) {
+                            if (assigned >= required) break;
+                            if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) break;
+                            if (slotIndex >= periodCount - 1
+                                || !isDashboardSlotEmpty(semester, section, day, slotIndex)
+                                || !isDashboardSlotEmpty(semester, section, day, slotIndex + 1)) continue;
 
-                        const firstBatch = assigned % 2 === 0;
-                        const batchAssignments = firstBatch
-                            ? [makeBatchAssignment(firstRequirement, 'P1'), makeBatchAssignment(secondRequirement, 'P2')]
-                            : [makeBatchAssignment(secondRequirement, 'P1'), makeBatchAssignment(firstRequirement, 'P2')];
-                        const displaySubject = batchAssignments.map(item => `${item.subject} (${item.batch})`).join(' / ');
-                        const slotInfo = {
-                            subject: displaySubject,
-                            subjectName: displaySubject,
-                            subjectCode: '',
-                            teacher: batchAssignments.map(item => `${item.batch}: ${item.teacher}`).join(' / '),
-                            room: '',
-                            classTeacher: '',
-                            studentNumber: '',
-                            academicSession: '',
-                            classType: 'Lab',
-                            batchAssignments
-                        };
-                        const slotKey1 = `${semester}|${section}|${day}|${slotIndex}`;
-                        const slotKey2 = `${semester}|${section}|${day}|${slotIndex + 1}`;
-                        slotDataStore[slotKey1] = { ...slotInfo };
-                        slotDataStore[slotKey2] = { ...slotInfo, batchAssignments: batchAssignments.map(item => ({ ...item })) };
-                        setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
-                        setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
+                            const assignments = [
+                                { requirement: firstRequirement, teacher: normalizeTeacherName(firstRequirement.teacher), subject: firstRequirement.subjectCode ? `${firstRequirement.subjectName} (${firstRequirement.subjectCode})` : firstRequirement.subjectName },
+                                { requirement: secondRequirement, teacher: normalizeTeacherName(secondRequirement.teacher), subject: secondRequirement.subjectCode ? `${secondRequirement.subjectName} (${secondRequirement.subjectCode})` : secondRequirement.subjectName }
+                            ];
+                            const unavailable = assignments.some(({ requirement, teacher, subject }) => (
+                                isTeacherAssignedInOtherSection(semester, day, slotIndex, requirement.teacher, section)
+                                || isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, requirement.teacher, section)
+                                || (teacherSchedule[teacher] && (teacherSchedule[teacher][`${day}-${slotIndex}`] || teacherSchedule[teacher][`${day}-${slotIndex + 1}`]))
+                                || findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, subject)
+                                || findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, subject)
+                            ));
+                            if (unavailable) continue;
 
-                        assignments.forEach(({ requirement, teacher }) => {
-                            if (!teacherSchedule[teacher]) teacherSchedule[teacher] = {};
-                            teacherSchedule[teacher][`${day}-${slotIndex}`] = true;
-                            teacherSchedule[teacher][`${day}-${slotIndex + 1}`] = true;
-                            addDailySubjectAssignment(requirement.teacher, requirement.subjectCode, requirement.subjectName, day, dashboardCourse, semester, section);
-                        });
-                        assigned += 1;
-                        filledCount += 2;
+                            const batchAssignments = createDashboardLabBatchAssignments(
+                                firstRequirement,
+                                secondRequirement,
+                                assigned
+                            );
+                            const displaySubject = batchAssignments.map(item => `${item.subject} (${item.batch})`).join(' / ');
+                            const slotInfo = {
+                                subject: displaySubject,
+                                subjectName: displaySubject,
+                                subjectCode: '',
+                                teacher: batchAssignments.map(item => `${item.batch}: ${item.teacher}`).join(' / '),
+                                room: '',
+                                classTeacher: '',
+                                studentNumber: '',
+                                academicSession: '',
+                                classType: 'Lab',
+                                batchAssignments
+                            };
+                            const slotKey1 = `${semester}|${section}|${day}|${slotIndex}`;
+                            const slotKey2 = `${semester}|${section}|${day}|${slotIndex + 1}`;
+                            slotDataStore[slotKey1] = { ...slotInfo };
+                            slotDataStore[slotKey2] = { ...slotInfo, batchAssignments: batchAssignments.map(item => ({ ...item })) };
+                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
+                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
+
+                            assignments.forEach(({ requirement, teacher }) => {
+                                if (!teacherSchedule[teacher]) teacherSchedule[teacher] = {};
+                                teacherSchedule[teacher][`${day}-${slotIndex}`] = true;
+                                teacherSchedule[teacher][`${day}-${slotIndex + 1}`] = true;
+                            });
+                            sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
+                            assigned += 1;
+                            filledCount += 2;
+                        }
                     }
                 }
 
@@ -3751,7 +3766,7 @@ let nextId = 3;
                 const normalizedSubjectCode = normalizeSubjectValue(req.subjectCode);
                 const normalizedSubjectName = normalizeSubjectValue(req.subjectName);
                 const normalizedTeacher = normalizeTeacherName(req.teacher);
-                const existingSessionDays = new Set();
+                const sessionCountsByDay = new Map();
                 Object.keys(slotDataStore).forEach(key => {
                     const [slotSemester, slotSection, day, slotIndexText] = key.split('|');
                     if (slotSemester !== semester || slotSection !== section) return;
@@ -3778,76 +3793,78 @@ let nextId = 3;
                             && /lab/i.test(previousAssignment.classType || previous?.classType || previousAssignment.subject || '')
                         ))) return;
                     }
-                    existingSessionDays.add(day);
+                    sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
                     });
-                let assignedThisReq = existingSessionDays.size;
+                let assignedThisReq = Array.from(sessionCountsByDay.values()).reduce((total, count) => total + count, 0);
 
-                for (const day of shuffledDashboardValues(days)) {
-                    if (assignedThisReq >= required) break;
-                    if (hasDailySubjectAssignment(req.teacher, req.subjectCode, req.subjectName, day, dashboardCourse, semester, section)) continue;
-                    const slotIndexes = Array.from({ length: periodCount }, (_, index) => index);
-                    for (const slotIndex of shuffledDashboardValues(slotIndexes)) {
+                for (const dailyLimit of [1, 2]) {
+                    for (const day of shuffledDashboardValues(days)) {
                         if (assignedThisReq >= required) break;
-                        if (hasDailySubjectAssignment(req.teacher, req.subjectCode, req.subjectName, day, dashboardCourse, semester, section)) break;
-                        if (isLab) {
-                            if (slotIndex >= periodCount - 1) continue;
-                            if (!isDashboardSlotEmpty(semester, section, day, slotIndex)) continue;
-                            if (!isDashboardSlotEmpty(semester, section, day, slotIndex + 1)) continue;
-                            if (isTeacherAssignedInOtherSection(semester, day, slotIndex, req.teacher, section)) continue;
-                            if (isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, req.teacher, section)) continue;
-                            if (findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, displaySubject)) continue;
-                            if (findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, displaySubject)) continue;
-                            const teacherKey1 = `${day}-${slotIndex}`;
-                            const teacherKey2 = `${day}-${slotIndex + 1}`;
-                            if ((teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey1]) || (teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey2])) continue;
+                        if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) continue;
+                        const slotIndexes = Array.from({ length: periodCount }, (_, index) => index);
+                        for (const slotIndex of shuffledDashboardValues(slotIndexes)) {
+                            if (assignedThisReq >= required) break;
+                            if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) break;
+                            if (isLab) {
+                                if (slotIndex >= periodCount - 1) continue;
+                                if (!isDashboardSlotEmpty(semester, section, day, slotIndex)) continue;
+                                if (!isDashboardSlotEmpty(semester, section, day, slotIndex + 1)) continue;
+                                if (isTeacherAssignedInOtherSection(semester, day, slotIndex, req.teacher, section)) continue;
+                                if (isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, req.teacher, section)) continue;
+                                if (findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, displaySubject)) continue;
+                                if (findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, displaySubject)) continue;
+                                const teacherKey1 = `${day}-${slotIndex}`;
+                                const teacherKey2 = `${day}-${slotIndex + 1}`;
+                                if ((teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey1]) || (teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey2])) continue;
 
-                            const slotKey1 = `${semester}|${section}|${day}|${slotIndex}`;
-                            const slotKey2 = `${semester}|${section}|${day}|${slotIndex + 1}`;
-                            const slotInfo = {
-                                subject: displaySubject,
-                                subjectName: req.subjectName || (req.subjectCode ? req.subjectName : ''),
-                                subjectCode: req.subjectCode || '',
-                                teacher: req.teacher,
-                                room: '',
-                                classTeacher: '',
-                                studentNumber: '',
-                                academicSession: '',
-                                classType: req.classType
-                            };
-                            slotDataStore[slotKey1] = slotInfo;
-                            slotDataStore[slotKey2] = slotInfo;
-                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
-                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
-                            if (!teacherSchedule[normalizedTeacher]) teacherSchedule[normalizedTeacher] = {};
-                            teacherSchedule[normalizedTeacher][teacherKey1] = true;
-                            teacherSchedule[normalizedTeacher][teacherKey2] = true;
-                            addDailySubjectAssignment(req.teacher, req.subjectCode, req.subjectName, day, dashboardCourse, semester, section);
-                            assignedThisReq += 1;
-                            filledCount += 2;
-                        } else {
-                            if (!isDashboardSlotEmpty(semester, section, day, slotIndex)) continue;
-                            if (isTeacherAssignedInOtherSection(semester, day, slotIndex, req.teacher, section)) continue;
-                            const teacherKey = `${day}-${slotIndex}`;
-                            if (teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey]) continue;
+                                const slotKey1 = `${semester}|${section}|${day}|${slotIndex}`;
+                                const slotKey2 = `${semester}|${section}|${day}|${slotIndex + 1}`;
+                                const slotInfo = {
+                                    subject: displaySubject,
+                                    subjectName: req.subjectName || (req.subjectCode ? req.subjectName : ''),
+                                    subjectCode: req.subjectCode || '',
+                                    teacher: req.teacher,
+                                    room: '',
+                                    classTeacher: '',
+                                    studentNumber: '',
+                                    academicSession: '',
+                                    classType: req.classType
+                                };
+                                slotDataStore[slotKey1] = slotInfo;
+                                slotDataStore[slotKey2] = slotInfo;
+                                setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
+                                setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
+                                if (!teacherSchedule[normalizedTeacher]) teacherSchedule[normalizedTeacher] = {};
+                                teacherSchedule[normalizedTeacher][teacherKey1] = true;
+                                teacherSchedule[normalizedTeacher][teacherKey2] = true;
+                                sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
+                                assignedThisReq += 1;
+                                filledCount += 2;
+                            } else {
+                                if (!isDashboardSlotEmpty(semester, section, day, slotIndex)) continue;
+                                if (isTeacherAssignedInOtherSection(semester, day, slotIndex, req.teacher, section)) continue;
+                                const teacherKey = `${day}-${slotIndex}`;
+                                if (teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey]) continue;
 
-                            const slotKey = `${semester}|${section}|${day}|${slotIndex}`;
-                            slotDataStore[slotKey] = {
-                                subject: displaySubject,
-                                subjectName: req.subjectName || '',
-                                subjectCode: req.subjectCode || '',
-                                teacher: req.teacher,
-                                room: '',
-                                classTeacher: '',
-                                studentNumber: '',
-                                academicSession: '',
-                                classType: req.classType
-                            };
-                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
-                            if (!teacherSchedule[normalizedTeacher]) teacherSchedule[normalizedTeacher] = {};
-                            teacherSchedule[normalizedTeacher][teacherKey] = true;
-                            addDailySubjectAssignment(req.teacher, req.subjectCode, req.subjectName, day, dashboardCourse, semester, section);
-                            assignedThisReq += 1;
-                            filledCount += 1;
+                                const slotKey = `${semester}|${section}|${day}|${slotIndex}`;
+                                slotDataStore[slotKey] = {
+                                    subject: displaySubject,
+                                    subjectName: req.subjectName || '',
+                                    subjectCode: req.subjectCode || '',
+                                    teacher: req.teacher,
+                                    room: '',
+                                    classTeacher: '',
+                                    studentNumber: '',
+                                    academicSession: '',
+                                    classType: req.classType
+                                };
+                                setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
+                                if (!teacherSchedule[normalizedTeacher]) teacherSchedule[normalizedTeacher] = {};
+                                teacherSchedule[normalizedTeacher][teacherKey] = true;
+                                sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
+                                assignedThisReq += 1;
+                                filledCount += 1;
+                            }
                         }
                     }
                 }
@@ -5418,7 +5435,7 @@ let nextId = 3;
         }
 
         // Show a styled conflict modal with message details
-        function showConflictModal(message) {
+        function showConflictModal(message, title = 'Conflict Detected') {
             let modal = document.getElementById('conflictModal');
             if (!modal) {
                 // Create modal DOM
@@ -5428,7 +5445,7 @@ let nextId = 3;
                 modal.style.zIndex = 12000;
                 modal.innerHTML = `
                     <div class="edit-modal" style="max-width:600px;">
-                        <h3 style="margin-bottom:8px;">Conflict Detected</h3>
+                        <h3 id="conflictModalTitle" style="margin-bottom:8px;"></h3>
                         <div id="conflictModalMessage" style="white-space:pre-wrap; color:#4b5563; margin-bottom:16px;"></div>
                         <div style="display:flex; gap:8px; justify-content:flex-end;">
                             <button class="btn btn-secondary" onclick="closeConflictModal()">Close</button>
@@ -5436,7 +5453,9 @@ let nextId = 3;
                     </div>`;
                 document.body.appendChild(modal);
             }
+            const titleEl = document.getElementById('conflictModalTitle');
             const msgDiv = document.getElementById('conflictModalMessage');
+            if (titleEl) titleEl.textContent = title;
             if (msgDiv) msgDiv.textContent = message;
             modal.classList.add('active');
         }

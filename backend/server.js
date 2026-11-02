@@ -517,6 +517,7 @@ function sanitizeSubject(raw) {
     category,
     electiveType,
     isLab: Boolean(raw.isLab),
+    labEnabled: Boolean(raw.labEnabled),
     course,
     semester
   };
