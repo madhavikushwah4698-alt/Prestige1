@@ -3923,6 +3923,7 @@ let nextId = 3;
             };
             const paired = [];
             const unmatched = [];
+            const pairRotationCounts = new Map();
             while (sessionUnits.length) {
                 const first = sessionUnits.shift();
                 const secondIndex = sessionUnits.findIndex(candidate => (
@@ -3944,6 +3945,19 @@ let nextId = 3;
                     continue;
                 }
                 const second = sessionUnits.splice(secondIndex, 1)[0];
+                const pairSubjects = [first, second].map(requirement => normalizeSubjectValue(
+                    requirement.subjectCode || requirement.subjectName
+                )).sort();
+                const rotationKey = JSON.stringify([
+                    first.course || dashboardCourse,
+                    first.semester || dashboardTimetableState.currentSemester,
+                    first.section || dashboardTimetableState.currentSection,
+                    ...pairSubjects
+                ]);
+                const rotationIndex = pairRotationCounts.get(rotationKey) || 0;
+                pairRotationCounts.set(rotationKey, rotationIndex + 1);
+                const firstBatch = rotationIndex % 2 === 0 ? 'P1' : 'P2';
+                const secondBatch = firstBatch === 'P1' ? 'P2' : 'P1';
                 paired.push({
                     course: first.course || dashboardCourse,
                     semester: first.semester || dashboardTimetableState.currentSemester,
@@ -3952,8 +3966,8 @@ let nextId = 3;
                     lecturesPerWeek: 1,
                     pairedAcrossBatches: true,
                     batchAssignments: [
-                        createDashboardPairedLabBatchAssignment(first, 'P1'),
-                        createDashboardPairedLabBatchAssignment(second, 'P2')
+                        createDashboardPairedLabBatchAssignment(first, firstBatch),
+                        createDashboardPairedLabBatchAssignment(second, secondBatch)
                     ]
                 });
             }
@@ -4385,7 +4399,11 @@ let nextId = 3;
             ];
 
             shuffledDashboardValues(requirements)
-                .sort((a, b) => b.lecturesPerWeek - a.lecturesPerWeek)
+                .sort((a, b) => {
+                    const aIsLab = String(a.classType || '').toLowerCase().includes('lab');
+                    const bIsLab = String(b.classType || '').toLowerCase().includes('lab');
+                    return Number(bIsLab) - Number(aIsLab) || b.lecturesPerWeek - a.lecturesPerWeek;
+                })
                 .forEach((req) => {
                 const isLab = String(req.classType || '').toLowerCase().includes('lab');
                 const isPairedLab = Boolean(req.pairedAcrossBatches && Array.isArray(req.batchAssignments));
@@ -4454,7 +4472,8 @@ let nextId = 3;
                     (isPairedLab ? pairedSessionCountsByDay : sessionCountsByDay).values()
                 ).reduce((total, count) => total + count, 0);
 
-                for (const dailyLimit of [1, 2]) {
+                const maxLabsPerDay = Math.max(1, Math.floor(periodCount / 2));
+                for (let dailyLimit = 1; dailyLimit <= maxLabsPerDay; dailyLimit += 1) {
                     for (const day of shuffledDashboardValues(days)) {
                         if (assignedThisReq >= required) break;
                         if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) continue;
