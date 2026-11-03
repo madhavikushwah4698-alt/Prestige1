@@ -640,7 +640,7 @@
                     <div class="main-head">
                         <div>
                             <h1>Manage Lab</h1>
-                            <p>Configure lab subjects, durations, and practical allocation settings.</p>
+                            <p>Turn on Individual lab to keep a subject outside P1/P2. When off, different lab subjects are paired into P1 and P2.</p>
                         </div>
                         <div class="date-chip mono" id="admin-date-lab"></div>
                     </div>
@@ -1035,36 +1035,28 @@
                             </select>
                         </div>
                         <div class="modal-row" id="editSlotSingleRoomRow">
-                            <label for="editSlotRoom">Room Number</label>
+                            <label for="editSlotRoom">P1 Lab Room</label>
                             <input id="editSlotRoom" type="text" placeholder="Enter room number">
                         </div>
-                        <div id="editSlotLabBatches" hidden>
-                            <p class="card-sub">Assign separate lab subjects, faculty, and rooms to the two 30-student batches.</p>
-                            <div class="modal-row">
-                                <label for="editSlotP1Subject">P1 batch subject</label>
-                                <select id="editSlotP1Subject"></select>
-                            </div>
-                            <div class="modal-row">
-                                <label for="editSlotP1Teacher">P1 batch faculty</label>
-                                <select id="editSlotP1Teacher"></select>
-                            </div>
-                            <div class="modal-row">
-                                <label for="editSlotP1Room">P1 batch lab room</label>
-                                <input id="editSlotP1Room" type="text" placeholder="Enter P1 lab room" required>
-                            </div>
-                            <div class="modal-row">
-                                <label for="editSlotP2Subject">P2 batch subject</label>
-                                <select id="editSlotP2Subject"></select>
-                            </div>
-                            <div class="modal-row">
-                                <label for="editSlotP2Teacher">P2 batch faculty</label>
-                                <select id="editSlotP2Teacher"></select>
-                            </div>
-                            <div class="modal-row">
-                                <label for="editSlotP2Room">P2 batch lab room</label>
-                                <input id="editSlotP2Room" type="text" placeholder="Enter P2 lab room" required>
-                            </div>
+                        <div class="modal-row" id="editSlotP2SubjectRow" hidden>
+                            <label for="editSlotP2Subject">P2 Lab Subject</label>
+                            <select id="editSlotP2Subject"
+                                style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);">
+                                <option value="">(Select a different lab subject)</option>
+                            </select>
                         </div>
+                        <div class="modal-row" id="editSlotP2TeacherRow" hidden>
+                            <label for="editSlotP2Teacher">P2 Teacher</label>
+                            <select id="editSlotP2Teacher"
+                                style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);">
+                                <option value="">(Select teacher)</option>
+                            </select>
+                        </div>
+                        <div class="modal-row" id="editSlotP2RoomRow" hidden>
+                            <label for="editSlotP2Room">P2 Lab Room</label>
+                            <input id="editSlotP2Room" type="text" placeholder="Enter room number">
+                        </div>
+                        <p class="card-sub" id="editSlotLabAssignmentHint" hidden></p>
                         <div class="modal-row">
                             <label for="editSlotClassTeacher">Class Teacher</label>
                             <input id="editSlotClassTeacher" type="text" placeholder="Enter class teacher">
@@ -1356,7 +1348,7 @@
         </main>
     </div>
 
-    <script src="modules/app.js"></script>
+    <script src="modules/app.js?v=individual-lab-mode-6"></script>
 
     <div id="teacherTimetableModal" class="modal-backdrop teacher-timetable-modal"
         onclick="closeTeacherTimetableModal()">

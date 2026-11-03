@@ -1284,6 +1284,10 @@ let nextId = 3;
             return d.innerHTML;
         }
 
+        function escapeHtmlAttribute(value) {
+            return escapeHtml(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         function formatToday() {
             return new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
         }
@@ -1293,12 +1297,15 @@ let nextId = 3;
         let subjectCatalog = [];
         let labCatalog = [];
         let labTimetable = {};
+        let sharedLabSubjects = {};
         let manageFormLectureCounts = {};
         let manageFormSubjectSelections = {};
         const LAB_CATALOG_STORAGE_KEY = 'prestigeLabCatalog';
         const LAB_TIMETABLE_STORAGE_KEY = 'prestigeLabTimetable';
         const MANAGE_FORM_COUNTS_STORAGE_KEY = 'prestigeManageFormLectureCounts';
         const MANAGE_FORM_SUBJECTS_STORAGE_KEY = 'prestigeManageFormSubjectSelections';
+        const SHARED_LAB_SUBJECTS_STORAGE_KEY = 'prestigeSharedLabSubjects';
+        const PENDING_SHARED_LAB_SUBJECTS_STORAGE_KEY = 'prestigePendingSharedLabSubjects';
         const LEGACY_APP_SETTINGS_KEYS = [
             LAB_CATALOG_STORAGE_KEY,
             LAB_TIMETABLE_STORAGE_KEY,
@@ -1332,6 +1339,7 @@ let nextId = 3;
                 settings: {
                     labCatalog: labCatalog.value,
                     labTimetable: labTimetable.value,
+                    sharedLabSubjects: {},
                     manageFormLectureCounts: lectureCounts.value,
                     manageFormSubjectSelections: subjectSelections.value
                 }
@@ -1343,6 +1351,7 @@ let nextId = 3;
             labTimetable = settings.labTimetable && typeof settings.labTimetable === 'object' && !Array.isArray(settings.labTimetable)
                 ? settings.labTimetable
                 : {};
+            sharedLabSubjects = normalizeSharedLabSubjectSettings(settings.sharedLabSubjects);
             manageFormLectureCounts = settings.manageFormLectureCounts && typeof settings.manageFormLectureCounts === 'object' && !Array.isArray(settings.manageFormLectureCounts)
                 ? settings.manageFormLectureCounts
                 : {};
@@ -1372,6 +1381,73 @@ let nextId = 3;
                 manageFormSubjectSelections,
                 teacherRoster: manualTeacherRoster
             };
+        }
+
+        async function saveSharedLabSubjectsToApi(settings = sharedLabSubjects) {
+            if (!appSettingsLoaded || !apiToken || apiRole !== 'admin') return false;
+            const request = appSettingsSaveQueue.catch(() => {}).then(() => apiRequest('/api/app-settings/shared-lab-subjects', {
+                method: 'PUT',
+                body: { sharedLabSubjects: settings }
+            }));
+            appSettingsSaveQueue = request;
+            try {
+                await request;
+                try {
+                    localStorage.removeItem(PENDING_SHARED_LAB_SUBJECTS_STORAGE_KEY);
+                } catch (error) {
+                    console.warn('Pending shared lab settings could not be cleared from this browser:', error);
+                }
+                setAppSettingsSaveStatus('Saved to database.');
+                return true;
+            } catch (error) {
+                if (error.status === 401) setApiSession('', '');
+                console.warn('Shared lab settings were not saved to MongoDB:', error);
+                setAppSettingsSaveStatus('Shared lab setting was not saved to database. Retry when the backend is available.', true);
+                return false;
+            }
+        }
+
+        function saveSharedLabSubjectsLocally(settings) {
+            try {
+                localStorage.setItem(SHARED_LAB_SUBJECTS_STORAGE_KEY, JSON.stringify(settings));
+                return true;
+            } catch (error) {
+                console.warn('Shared lab settings could not be saved in this browser:', error);
+                return false;
+            }
+        }
+
+        function readSavedSharedLabSubjects(includeLastSaved = true) {
+            try {
+                const pendingSettings = localStorage.getItem(PENDING_SHARED_LAB_SUBJECTS_STORAGE_KEY);
+                const backendIsAuthoritative = typeof appSettingsLoaded !== 'undefined'
+                    && appSettingsLoaded
+                    && typeof apiToken !== 'undefined'
+                    && Boolean(apiToken)
+                    && typeof apiRole !== 'undefined'
+                    && apiRole === 'admin';
+                const rawSettings = pendingSettings
+                    ?? (includeLastSaved && !backendIsAuthoritative
+                        ? localStorage.getItem(SHARED_LAB_SUBJECTS_STORAGE_KEY)
+                        : null);
+                if (rawSettings === null) return null;
+                const settings = JSON.parse(rawSettings);
+                if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+                    console.warn('Saved shared lab settings in this browser are invalid.');
+                    return null;
+                }
+                return normalizeSharedLabSubjectSettings(settings);
+            } catch (error) {
+                console.warn('Saved shared lab settings could not be read from this browser:', error);
+                return null;
+            }
+        }
+
+        function restoreSavedSharedLabSubjects() {
+            const savedSettings = readSavedSharedLabSubjects();
+            if (savedSettings === null) return false;
+            sharedLabSubjects = savedSettings;
+            return true;
         }
 
         async function saveAppSettingsToApi() {
@@ -1409,17 +1485,40 @@ let nextId = 3;
             if (!apiToken || apiRole !== 'admin') return false;
             try {
                 const payload = await apiRequest('/api/app-settings');
+                const pendingSharedLabSubjects = readSavedSharedLabSubjects(false);
+                let sharedLabSettingsMigrated = false;
+                let pendingSharedLabSyncFailed = false;
                 if (payload.settings) {
-                    applyAppSettings(payload.settings);
+                    const normalizedSharedLabs = normalizeSharedLabSubjectSettings(payload.settings.sharedLabSubjects);
+                    sharedLabSettingsMigrated = JSON.stringify(normalizedSharedLabs)
+                        !== JSON.stringify(payload.settings.sharedLabSubjects || {});
+                    applyAppSettings({ ...payload.settings, sharedLabSubjects: normalizedSharedLabs });
+                    sharedLabSubjects = normalizedSharedLabs;
                 } else {
                     const legacy = readLegacyAppSettings();
                     applyAppSettings(legacy.settings);
+                    sharedLabSubjects = normalizeSharedLabSubjectSettings(legacy.settings.sharedLabSubjects);
                     await apiRequest('/api/app-settings', {
                         method: 'PUT',
                         body: { settings: legacy.settings }
                     });
                 }
                 appSettingsLoaded = true;
+                if (pendingSharedLabSubjects !== null) {
+                    sharedLabSubjects = pendingSharedLabSubjects;
+                    renderManageLabSubjects();
+                    if (!await saveSharedLabSubjectsToApi(sharedLabSubjects)) {
+                        pendingSharedLabSyncFailed = true;
+                        try {
+                            localStorage.setItem(PENDING_SHARED_LAB_SUBJECTS_STORAGE_KEY, JSON.stringify(sharedLabSubjects));
+                        } catch (error) {
+                            console.warn('Pending shared lab settings could not be saved in this browser:', error);
+                        }
+                    }
+                } else {
+                    renderManageLabSubjects();
+                    if (sharedLabSettingsMigrated && !await saveSharedLabSubjectsToApi()) return false;
+                }
                 LEGACY_APP_SETTINGS_KEYS.forEach(key => {
                     try {
                         localStorage.removeItem(key);
@@ -1427,7 +1526,12 @@ let nextId = 3;
                         console.warn(`Legacy app setting ${key} could not be removed:`, error);
                     }
                 });
-                setAppSettingsSaveStatus('Loaded from database.');
+                setAppSettingsSaveStatus(
+                    pendingSharedLabSyncFailed
+                        ? 'Shared lab settings are kept in this browser and will retry syncing at your next login.'
+                        : 'Loaded from database.',
+                    pendingSharedLabSyncFailed
+                );
                 return true;
             } catch (error) {
                 if (error.status === 401) setApiSession('', '');
@@ -1449,6 +1553,180 @@ let nextId = 3;
             ].join('|');
         }
 
+        function sharedLabSubjectName(value) {
+            let name = String(value || '').trim();
+            for (let index = 0; index < 2; index += 1) {
+                name = name
+                    .replace(/\b(?:lab|laboratory)\b/gi, ' ')
+                    .replace(/\s*\((?=[A-Z0-9-]*\d)[A-Z][A-Z0-9-]*\)\s*$/i, '')
+                    .trim();
+            }
+            name = name.replace(/[()]/g, ' ');
+            return name.toLowerCase().replace(/\s+/g, ' ').trim();
+        }
+
+        function sharedLabSubjectKey(item = {}) {
+            return JSON.stringify([
+                item.course || 'B.Tech',
+                item.semester || 'semester1',
+                sharedLabSubjectName(item.name || item.subjectName || item.label)
+            ]);
+        }
+
+        function sharedLabSubjectCodeKey(item = {}) {
+            const code = String(item.code || item.subjectCode || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            return code ? JSON.stringify(['code', item.course || 'B.Tech', item.semester || 'semester1', code]) : '';
+        }
+
+        function normalizeSharedLabSubjectSettings(settings = {}) {
+            if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return {};
+            const normalized = {};
+            const catalogSubjects = typeof subjectCatalog !== 'undefined' && Array.isArray(subjectCatalog)
+                ? subjectCatalog
+                : [];
+            const scopeLegacySetting = matches => {
+                const scopes = new Map();
+                matches.forEach(subject => {
+                    const scope = JSON.stringify([
+                        subject.course || 'B.Tech',
+                        subject.semester || 'semester1'
+                    ]);
+                    scopes.set(scope, subject);
+                });
+                if (scopes.size !== 1) return;
+                const subject = scopes.values().next().value;
+                normalized[sharedLabSubjectKey(subject)] = true;
+                const codeKey = sharedLabSubjectCodeKey(subject);
+                if (codeKey) normalized[codeKey] = true;
+            };
+            Object.entries(settings).forEach(([key, enabled]) => {
+                if (enabled !== true) return;
+                let parts;
+                if (key.startsWith('[')) {
+                    try {
+                        parts = JSON.parse(key);
+                    } catch {
+                        return;
+                    }
+                    if (!Array.isArray(parts)) return;
+                    if (parts.length === 3 && parts[0] !== 'code') {
+                        normalized[JSON.stringify([parts[0], parts[1], sharedLabSubjectName(parts[2])])] = true;
+                        return;
+                    }
+                    if (parts.length === 4 && parts[0] === 'code') {
+                        const code = String(parts[3] || '').trim().toLowerCase().replace(/\s+/g, ' ');
+                        if (code) normalized[JSON.stringify(['code', parts[1], parts[2], code])] = true;
+                        return;
+                    }
+                    if (parts.length === 1) {
+                        const name = sharedLabSubjectName(parts[0]);
+                        scopeLegacySetting(catalogSubjects.filter(subject => (
+                            sharedLabSubjectName(subject.name) === name
+                        )));
+                        return;
+                    }
+                    if (parts.length === 2 && parts[0] === 'code') {
+                        const code = String(parts[1] || '').trim().toLowerCase().replace(/\s+/g, ' ');
+                        scopeLegacySetting(catalogSubjects.filter(subject => (
+                            String(subject.code || '').trim().toLowerCase().replace(/\s+/g, ' ') === code
+                        )));
+                    }
+                    return;
+                }
+
+                const legacyParts = key.split('|');
+                if (legacyParts.length >= 6) {
+                    normalized[JSON.stringify([
+                        legacyParts[0],
+                        legacyParts[1],
+                        sharedLabSubjectName(legacyParts[5])
+                    ])] = true;
+                }
+            });
+            return normalized;
+        }
+
+        function isSharedLabSubject(item = {}) {
+            const nameKey = sharedLabSubjectKey(item);
+            const codeKey = sharedLabSubjectCodeKey(item);
+            const savedSettings = typeof localStorage === 'undefined' ? null : readSavedSharedLabSubjects();
+            const effectiveSettings = savedSettings || sharedLabSubjects;
+            if (codeKey && effectiveSettings[codeKey] === true) return true;
+            if (codeKey && typeof subjectCatalog !== 'undefined' && Array.isArray(subjectCatalog)) {
+                const normalizedCode = String(item.code || item.subjectCode || '').trim().toLowerCase().replace(/\s+/g, ' ');
+                const hasSameNameWithDifferentCode = subjectCatalog.some(subject => (
+                    (subject.course || 'B.Tech') === (item.course || 'B.Tech')
+                    && (subject.semester || 'semester1') === (item.semester || 'semester1')
+                    && sharedLabSubjectName(subject.name) === sharedLabSubjectName(item.name || item.subjectName || item.label)
+                    && Boolean(subject.code)
+                    && String(subject.code || '').trim().toLowerCase().replace(/\s+/g, ' ') !== normalizedCode
+                ));
+                if (hasSameNameWithDifferentCode) return false;
+            }
+            return effectiveSettings[nameKey] === true;
+        }
+
+        function isManageLabToggleEnabled(item = {}) {
+            const nameKey = sharedLabSubjectKey(item);
+            const codeKey = sharedLabSubjectCodeKey(item);
+            const toggles = typeof document === 'undefined'
+                ? []
+                : Array.from(document.querySelectorAll('[data-shared-lab-subject]'));
+            const subjectMatches = toggles.filter(input => (
+                codeKey
+                    ? input.dataset.sharedLabCode === codeKey
+                        || (!input.dataset.sharedLabCode && input.dataset.sharedLabSubject === nameKey)
+                    : input.dataset.sharedLabSubject === nameKey
+            ));
+            // A live checkbox is the freshest choice, including immediately after
+            // a click while local or database settings may still be stale.
+            return subjectMatches.length
+                ? subjectMatches.some(input => input.checked)
+                : isSharedLabSubject(item);
+        }
+
+        function getSelectedManageLabToggleSettings(selectedKeys, labSubjects = getLabSubjectOptions()) {
+            const selectedSubjects = labSubjects.filter(item => selectedKeys.includes(subjectIdentity(item)));
+            const toggles = typeof document === 'undefined'
+                ? []
+                : Array.from(document.querySelectorAll('#lab-subject-list [data-shared-lab-subject]'));
+            const nextSettings = { ...sharedLabSubjects };
+            selectedSubjects.forEach(item => {
+                const nameKey = sharedLabSubjectKey(item);
+                const codeKey = sharedLabSubjectCodeKey(item);
+                const toggle = toggles.find(input => codeKey
+                    ? input.dataset.sharedLabCode === codeKey
+                    : input.dataset.sharedLabSubject === nameKey);
+                if (!toggle) return;
+                if (toggle.checked) {
+                    nextSettings[nameKey] = true;
+                    if (codeKey) nextSettings[codeKey] = true;
+                } else {
+                    delete nextSettings[nameKey];
+                    if (codeKey) delete nextSettings[codeKey];
+                }
+            });
+            return nextSettings;
+        }
+
+        function subjectCategoryMatches(item = {}, category = 'main', electiveType = 'program') {
+            const itemCategory = item.category || 'main';
+            return itemCategory === category
+                && (category !== 'elective' || (item.electiveType || 'program') === electiveType);
+        }
+
+        function createLabSubjectEntry(item = {}, name, course, semester) {
+            return {
+                name,
+                code: '',
+                isLab: true,
+                course: course || 'B.Tech',
+                semester: semester || 'semester1',
+                category: item.category || 'main',
+                electiveType: item.electiveType || 'program'
+            };
+        }
+
         function getLabSubjectOptions() {
             const options = subjectCatalog.flatMap(item => {
                 if (!item?.name) return [];
@@ -1459,9 +1737,43 @@ let nextId = 3;
                     isLab: true
                 }];
             });
-            const uniqueOptions = Array.from(new Map(
-                options.map(item => [subjectIdentity(item), item])
-            ).values());
+            const baseSubjectsByLabKey = new Map();
+            subjectCatalog
+                .filter(item => item?.name && !item.isLab)
+                .forEach(item => {
+                    const key = JSON.stringify([
+                    item.course || 'B.Tech',
+                    item.semester || 'semester1',
+                    sharedLabSubjectName(item.name)
+                    ]);
+                    const matches = baseSubjectsByLabKey.get(key) || [];
+                    matches.push(item);
+                    baseSubjectsByLabKey.set(key, matches);
+                });
+            const uniqueOptions = Array.from(new Map(options.map(item => {
+                const scopeNameKey = JSON.stringify([
+                    item.course || 'B.Tech',
+                    item.semester || 'semester1',
+                    sharedLabSubjectName(item.name)
+                ]);
+                const candidates = baseSubjectsByLabKey.get(scopeNameKey) || [];
+                const itemCode = normalizeSubjectValue(item.code);
+                const baseSubject = itemCode
+                    ? candidates.find(subject => normalizeSubjectValue(subject.code) === itemCode)
+                    : candidates.length === 1 ? candidates[0] : null;
+                const mergedItem = baseSubject
+                    ? { ...baseSubject, ...item, code: item.code || baseSubject.code }
+                    : item;
+                const uniqueKey = JSON.stringify([
+                    item.course || 'B.Tech',
+                    item.semester || 'semester1',
+                    item.category || 'main',
+                    item.electiveType || 'program',
+                    sharedLabSubjectName(item.name),
+                    normalizeSubjectValue(mergedItem.code)
+                ]);
+                return [uniqueKey, mergedItem];
+            })).values());
 
             return uniqueOptions.sort((a, b) => {
                     const courseCompare = String(a.course || '').localeCompare(String(b.course || ''));
@@ -1476,6 +1788,7 @@ let nextId = 3;
             const list = document.getElementById('lab-subject-list');
             if (!list) return;
 
+            restoreSavedSharedLabSubjects();
             const labSubjects = getLabSubjectOptions();
             if (!labSubjects.length) {
                 list.innerHTML = '<div class="lab-empty">No lab subjects added yet. Use Add Subject and select "Is Lab".</div>';
@@ -1484,15 +1797,58 @@ let nextId = 3;
 
             list.innerHTML = labSubjects.map((item) => {
                 const key = subjectIdentity(item);
+                const sharedKey = sharedLabSubjectKey(item);
+                const sharedCodeKey = sharedLabSubjectCodeKey(item);
                 const label = item.code ? `${item.name} (${item.code})` : item.name;
                 const meta = [item.course, semesterToRomanLabel(item.semester)].filter(Boolean).join(' | ');
                 return `
-                    <label class="lab-subject-option">
-                        <input type="checkbox" value="${escapeHtml(key)}">
-                        <span>${escapeHtml(label)}${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</span>
-                    </label>
+                    <div class="lab-subject-option">
+                        <label class="lab-subject-selection">
+                            <input type="checkbox" value="${escapeHtml(key)}">
+                            <span>${escapeHtml(label)}${meta ? `<small>${escapeHtml(meta)}</small>` : ''}</span>
+                        </label>
+                        <label class="manage-form-switch lab-shared-switch" title="Keep this subject as one individual lab without P1/P2 pairing">
+                            <input type="checkbox" data-shared-lab-subject="${escapeHtmlAttribute(sharedKey)}" data-shared-lab-code="${escapeHtmlAttribute(sharedCodeKey)}" ${isSharedLabSubject(item) ? 'checked' : ''}>
+                            <span></span>
+                            <strong>Individual lab (no P1/P2)</strong>
+                        </label>
+                    </div>
                 `;
             }).join('');
+
+            list.querySelectorAll('[data-shared-lab-subject]').forEach(input => {
+                input.addEventListener('change', async () => {
+                    const nameKey = input.dataset.sharedLabSubject;
+                    if (!nameKey) return;
+                    const codeKey = input.dataset.sharedLabCode;
+                    const nextSettings = { ...sharedLabSubjects };
+                    if (input.checked) {
+                        nextSettings[nameKey] = true;
+                        if (codeKey) nextSettings[codeKey] = true;
+                    } else {
+                        delete nextSettings[nameKey];
+                        if (codeKey) delete nextSettings[codeKey];
+                    }
+                    sharedLabSubjects = nextSettings;
+                    const savedLocally = saveSharedLabSubjectsLocally(nextSettings);
+                    renderManageWorkloadSubjects();
+                    input.disabled = true;
+                    try {
+                        if (!await saveSharedLabSubjectsToApi(nextSettings)) {
+                            try {
+                                localStorage.setItem(PENDING_SHARED_LAB_SUBJECTS_STORAGE_KEY, JSON.stringify(nextSettings));
+                            } catch (error) {
+                                console.warn('Pending shared lab settings could not be saved in this browser:', error);
+                            }
+                            alert(savedLocally
+                                ? 'Individual lab setting is saved in this browser and will retry syncing at your next login.'
+                                : 'Individual lab setting is active for this session, but could not be saved. Please retry.');
+                        }
+                    } finally {
+                        input.disabled = false;
+                    }
+                });
+            });
         }
 
         function renderLabs() {
@@ -1549,6 +1905,28 @@ let nextId = 3;
 
         function getDashboardSlotAssignments(slot = {}) {
             if (Array.isArray(slot.batchAssignments) && slot.batchAssignments.length) {
+                if (slot.sharedAcrossBatches && slot.batchAssignments.length === 2) {
+                    const first = slot.batchAssignments[0];
+                    const second = slot.batchAssignments.find(assignment => assignment.batch !== first.batch);
+                    const hasBothBatches = slot.batchAssignments.some(assignment => assignment.batch === 'P1')
+                        && slot.batchAssignments.some(assignment => assignment.batch === 'P2');
+                    const sameSubject = second && (
+                        first.subjectCode && second.subjectCode
+                            ? normalizeSubjectValue(first.subjectCode) === normalizeSubjectValue(second.subjectCode)
+                            : sharedLabSubjectName(first.subjectName || first.subject)
+                                === sharedLabSubjectName(second.subjectName || second.subject)
+                    );
+                    if (hasBothBatches
+                        && sameSubject
+                        && normalizeTeacherName(first.teacher) === normalizeTeacherName(second.teacher)
+                        && normalizeLabSubjectValue(first.room) === normalizeLabSubjectValue(second.room)) {
+                        return [{
+                            ...first,
+                            batch: 'P1 + P2',
+                            sharedAcrossBatches: true
+                        }];
+                    }
+                }
                 return slot.batchAssignments;
             }
             if (!slot.subject && !slot.teacher) return [];
@@ -1558,6 +1936,7 @@ let nextId = 3;
                 subjectCode: slot.subjectCode || '',
                 teacher: slot.teacher || '',
                 room: slot.room || '',
+                sharedAcrossBatches: Boolean(slot.sharedAcrossBatches),
                 classType: slot.classType || 'Lecture'
             }];
         }
@@ -1861,6 +2240,7 @@ let nextId = 3;
                     return entry.isLab
                         && entryCourse === course
                         && entrySemester === semester
+                        && subjectCategoryMatches(entry, item.category || 'main', item.electiveType || 'program')
                         && normalizedName(entry.name) === normalizedName(item.name);
                 });
                 const countValue = manageFormLectureCounts[key] ?? (item.isLab ? 1 : 4);
@@ -1873,7 +2253,7 @@ let nextId = 3;
                             ${item.isLab ? '<span class="manage-form-lab-pill">Lab</span>' : ''}
                         </label>
                         <label class="manage-form-switch">
-                            <input type="checkbox" data-manage-form-lab="${escapeHtml(item.name)}" data-manage-form-lab-count="${escapeHtml(labCountKey)}" data-course="${escapeHtml(course)}" data-semester="${escapeHtml(semester)}" ${labEnabled ? 'checked' : ''}>
+                            <input type="checkbox" data-manage-form-lab="${escapeHtml(item.name)}" data-manage-form-lab-count="${escapeHtml(labCountKey)}" data-course="${escapeHtml(course)}" data-semester="${escapeHtml(semester)}" data-category="${escapeHtml(item.category || 'main')}" data-elective-type="${escapeHtml(item.electiveType || 'program')}" ${labEnabled ? 'checked' : ''}>
                             <span></span>
                             <strong>${labEnabled ? 'Lab ON' : 'Lab OFF'}</strong>
                         </label>
@@ -1990,6 +2370,43 @@ let nextId = 3;
             }
         }
 
+        function getManageWorkloadSubjectDisplayKey(subject = {}) {
+            return [
+                subject.course || '',
+                subject.semester || '',
+                sharedLabSubjectName(subject.name),
+                normalizeSubjectValue(subject.code)
+            ].join('|');
+        }
+
+        function getManageWorkloadSubjectForLabToggle(subject = {}, form = {}) {
+            const course = subject.course || form.course;
+            const semester = subject.semester || form.semester;
+            const catalogMatches = typeof subjectCatalog !== 'undefined' && Array.isArray(subjectCatalog)
+                ? subjectCatalog.filter(item => (
+                    sharedLabSubjectName(item.name) === sharedLabSubjectName(subject.name)
+                    && (item.course || course) === course
+                    && (item.semester || semester) === semester
+                ))
+                : [];
+            const subjectId = String(subject.id || '');
+            const subjectCode = normalizeSubjectValue(subject.code);
+            const catalogSubject = (subjectId
+                ? catalogMatches.find(item => String(item.id || '') === subjectId)
+                : null)
+                || (subjectCode
+                    ? catalogMatches.find(item => normalizeSubjectValue(item.code) === subjectCode)
+                    : catalogMatches.length === 1 ? catalogMatches[0] : null);
+            return {
+                ...subject,
+                code: subject.code || catalogSubject?.code || '',
+                isLab: Boolean(subject.isLab || catalogSubject?.isLab),
+                labEnabled: Boolean(subject.labEnabled || catalogSubject?.labEnabled),
+                course,
+                semester
+            };
+        }
+
         function getManageWorkloadSubjectGroups() {
             const course = document.getElementById('manage-workload-course')?.value;
             const semester = document.getElementById('manage-workload-semester')?.value;
@@ -1999,40 +2416,61 @@ let nextId = 3;
                 .forEach(form => {
                     (form.subjects || []).forEach(subject => {
                         const subjectId = String(subject.id || `${subject.name}|${subject.code || ''}`);
-                        if (!groups.has(subjectId)) groups.set(subjectId, { ...subject, id: subjectId, teachers: new Map() });
+                        const toggleSubject = getManageWorkloadSubjectForLabToggle(subject, form);
+                        const displayKey = getManageWorkloadSubjectDisplayKey(toggleSubject);
+                        if (!groups.has(displayKey)) {
+                            groups.set(displayKey, {
+                                ...toggleSubject,
+                                id: displayKey,
+                                name: String(toggleSubject.name || '').replace(/\b(?:lab|laboratory)\b/gi, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim(),
+                                individualLab: false,
+                                variants: [],
+                                teachers: new Map()
+                            });
+                        }
+                        const group = groups.get(displayKey);
+                        group.variants.push(toggleSubject);
+                        group.isLab = group.isLab || Boolean(toggleSubject.isLab);
+                        group.labEnabled = group.labEnabled || Boolean(toggleSubject.labEnabled);
+                        group.individualLab = group.individualLab || isManageLabToggleEnabled(toggleSubject);
                         const selected = form.status === 'submitted'
                             && (form.selectedSubjectIds || []).includes(subject.id);
                         if (selected) {
                             const teacherKey = String(form.facultyId || form.facultyEmail || form.facultyName).toLowerCase();
                             const selection = (form.selectedSubjects || []).find(item => item.id === subject.id);
-                            if (!groups.get(subjectId).teachers.has(teacherKey)) {
-                                groups.get(subjectId).teachers.set(teacherKey, {
+                            const assignmentKey = `${teacherKey}|${subjectId}`;
+                            if (!group.teachers.has(assignmentKey)) {
+                                group.teachers.set(assignmentKey, {
                                     name: form.facultyName || 'Faculty',
                                     email: form.facultyEmail || '',
+                                    facultyKey: teacherKey,
                                     formId: form.id,
                                     subjectId: subject.id,
+                                    subjectName: subject.name,
+                                    subjectIsLab: Boolean(subject.isLab),
                                     assignedSections: selection?.assignedSections || []
                                 });
                             }
                         }
                     });
                 });
-            return [...groups.values()];
+            return [...groups.values()].map(group => {
+                const displayVariant = group.variants.find(subject => !subject.isLab) || group.variants[0];
+                group.hasMultipleVariants = new Set(group.variants.map(subject => String(subject.id))).size > 1;
+                return {
+                    ...group,
+                    name: String(displayVariant?.name || group.name || '').replace(/\b(?:lab|laboratory)\b/gi, '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim(),
+                    code: displayVariant?.code || group.code || ''
+                };
+            });
         }
 
-        function getManageWorkloadLabRotationPairs(subjects = getManageWorkloadSubjectGroups()) {
-            const labSubjects = subjects.filter(subject => (
+        function getManageWorkloadLabSubjects(subjects = getManageWorkloadSubjectGroups()) {
+            return subjects.filter(subject => (
                 (subject.isLab || subject.labEnabled)
                 && Number(subject.labCount || (subject.isLab ? subject.lectureCount : 0)) > 0
+                && subject.individualLab
             ));
-            const pairs = [];
-            for (let index = 0; index + 1 < labSubjects.length; index += 2) {
-                pairs.push([labSubjects[index], labSubjects[index + 1]]);
-            }
-            return {
-                pairs,
-                unpaired: labSubjects.length % 2 ? labSubjects[labSubjects.length - 1] : null
-            };
         }
 
         function renderManageWorkloadSubjects() {
@@ -2044,36 +2482,28 @@ let nextId = 3;
                 return;
             }
 
-            const rotations = getManageWorkloadLabRotationPairs(subjects);
-            const batchLabelBySubject = new Map();
-            rotations.pairs.forEach(([first, second]) => {
-                batchLabelBySubject.set(first.id, 'P1');
-                batchLabelBySubject.set(second.id, 'P2');
-            });
-            const rotationPreview = rotations.pairs.length || rotations.unpaired
-                ? `<section class="manage-workload-lab-rotation" aria-label="P1 and P2 lab rotation">
-                    <h3>Lab batch rotation</h3>
-                    <p>First session: first lab goes to P1 and second lab goes to P2. In the next session, the batches swap labs.</p>
-                    ${rotations.pairs.map(([first, second], index) => `
-                        <div class="manage-workload-lab-pair">
-                            <strong>Pair ${index + 1}</strong>
-                            <span>Session 1: <b>P1</b> ${escapeHtml(first.name)} / <b>P2</b> ${escapeHtml(second.name)}</span>
-                            <span>Session 2: <b>P1</b> ${escapeHtml(second.name)} / <b>P2</b> ${escapeHtml(first.name)}</span>
-                        </div>
-                    `).join('')}
-                    ${rotations.unpaired ? `<p class="manage-workload-lab-unpaired">${escapeHtml(rotations.unpaired.name)} needs another lab subject to form a P1/P2 rotation.</p>` : ''}
-                </section>`
-                : '';
-
-            container.innerHTML = `${rotationPreview}<div class="manage-workload-subject-list">${subjects.map(subject => {
+            const individualLabIds = new Set(getManageWorkloadLabSubjects(subjects).map(subject => subject.id));
+            const labSubjectIds = new Set(subjects
+                .filter(subject => (subject.isLab || subject.labEnabled)
+                    && Number(subject.labCount || (subject.isLab ? subject.lectureCount : 0)) > 0)
+                .map(subject => subject.id));
+            container.innerHTML = `<div class="manage-workload-subject-list">${subjects.map(subject => {
                 const subjectCode = subject.code ? ' <span class="manage-workload-subject-code">' + escapeHtml(subject.code) + '</span>' : '';
-                const batchLabel = batchLabelBySubject.get(subject.id);
-                const batchPill = batchLabel ? ` <span class="manage-workload-batch-pill">${batchLabel}</span>` : '';
-                const teacherCount = subject.teachers.size;
+                const batchPill = individualLabIds.has(subject.id)
+                    ? ' <span class="manage-workload-batch-pill">Individual lab · no P1/P2</span>'
+                    : labSubjectIds.has(subject.id)
+                        ? ' <span class="manage-workload-batch-pill">P1/P2 paired by default</span>'
+                        : '';
+                const teacherCount = new Set([...subject.teachers.values()].map(teacher => (
+                    teacher.facultyKey
+                ))).size;
                 const selectedLabel = `${teacherCount} ${teacherCount === 1 ? 'faculty member' : 'faculty members'}`;
                 const teachers = teacherCount
                     ? [...subject.teachers.values()].map(teacher => {
                         const teacherEmail = teacher.email ? ' <span>' + escapeHtml(teacher.email) + '</span>' : '';
+                        const assignmentLabel = subject.hasMultipleVariants
+                            ? `<small>${escapeHtml(teacher.subjectName)}${teacher.subjectIsLab ? ' (Lab)' : ''}</small>`
+                            : '';
                         const assignedSections = new Set(teacher.assignedSections);
                         const sectionChecks = [
                             ['sectionA', 'A'],
@@ -2082,9 +2512,9 @@ let nextId = 3;
                         ].map(([section, label]) => `<label class="manage-workload-section-option">
                             <input type="checkbox" class="manage-workload-section-assignment" data-form-id="${escapeHtml(String(teacher.formId))}" data-subject-id="${escapeHtml(teacher.subjectId)}" value="${section}" ${assignedSections.has(section) ? 'checked' : ''}>
                             <span>Section ${label}</span>
-                        </label>`).join('');
+                        </label>                        `).join('');
                         return `<li class="manage-workload-teacher-row">
-                            <div class="manage-workload-teacher-identity"><strong>${escapeHtml(teacher.name)}</strong>${teacherEmail}</div>
+                            <div class="manage-workload-teacher-identity"><strong>${escapeHtml(teacher.name)}</strong>${teacherEmail}${assignmentLabel}</div>
                             <div class="manage-workload-section-options" aria-label="Assign sections to ${escapeHtml(teacher.name)}">${sectionChecks}</div>
                         </li>`;
                     }).join('')
@@ -2467,7 +2897,9 @@ let nextId = 3;
                                     const hintKey = `${course}|${semester}|${section}`;
                                     cells[day][idx].push({
                                         ...slot,
-                                        subject: assignment.batch ? `${assignment.subject} (${assignment.batch})` : assignment.subject,
+                                        subject: assignment.batch
+                                            ? `${assignment.subject} (${assignment.batch})`
+                                            : `${assignment.subject}${assignment.sharedAcrossBatches ? ' (P1 + P2)' : ''}`,
                                         teacher: assignment.teacher,
                                         room: assignment.room || slot.room,
                                         semester,
@@ -2587,7 +3019,7 @@ let nextId = 3;
             if (modal) modal.classList.remove('active');
         }
 
-        async function toggleSubjectLab(itemName, course = dashboardCourse || 'B.Tech', semester = dashboardTimetableState?.currentSemester || 'semester1') {
+        async function toggleSubjectLab(itemName, course = dashboardCourse || 'B.Tech', semester = dashboardTimetableState?.currentSemester || 'semester1', category = 'main', electiveType = 'program') {
             const baseName = String(itemName || '').trim();
             if (!baseName) return false;
             const previousCatalog = subjectCatalog.slice();
@@ -2598,12 +3030,17 @@ let nextId = 3;
                 const sameName = item.name && item.name.toLowerCase() === labName.toLowerCase();
                 const sameCourse = (item.course || '') === (course || '');
                 const sameSemester = (item.semester || '') === (semester || '');
-                return item.isLab && sameName && sameCourse && sameSemester;
+                return item.isLab && sameName && sameCourse && sameSemester
+                    && subjectCategoryMatches(item, category, electiveType);
             });
-
             if (existingLab) {
                 const indexToRemove = subjectCatalog.findIndex((item) => {
-                    return item.isLab && item.name && item.name.toLowerCase() === labName.toLowerCase() && (item.course || '') === (course || '') && (item.semester || '') === (semester || '');
+                    return item.isLab
+                        && item.name
+                        && item.name.toLowerCase() === labName.toLowerCase()
+                        && (item.course || '') === (course || '')
+                        && (item.semester || '') === (semester || '')
+                        && subjectCategoryMatches(item, category, electiveType);
                 });
                 if (indexToRemove >= 0) {
                     subjectCatalog.splice(indexToRemove, 1);
@@ -2613,13 +3050,12 @@ let nextId = 3;
                 renderManageFormSubjects();
                 try { if (document.getElementById('dashboardEditModalBackdrop')?.classList.contains('active')) populateEditSlotSubjectDropdown(); } catch (e) {}
             } else {
-                subjectCatalog.push({
-                    name: labName,
-                    code: '',
-                    isLab: true,
-                    course: course || 'B.Tech',
-                    semester: semester || 'semester1'
-                });
+                subjectCatalog.push(createLabSubjectEntry(
+                    { category, electiveType },
+                    labName,
+                    course,
+                    semester
+                ));
 
                 renderSubjects(document.getElementById('subjectSearch')?.value || '');
                 renderManageLabs();
@@ -2669,7 +3105,10 @@ let nextId = 3;
                 const baseName = normalizedName(item.name);
                 return !subjectCatalog.some((entry) => {
                     if (entry.isLab || !entry.name) return false;
-                    return normalizedName(entry.name) === baseName && (entry.course || '') === (course || '') && (entry.semester || '') === (semester || '');
+                    return normalizedName(entry.name) === baseName
+                        && (entry.course || '') === (course || '')
+                        && (entry.semester || '') === (semester || '')
+                        && subjectCategoryMatches(entry, item.category || 'main', item.electiveType || 'program');
                 });
             });
 
@@ -2709,7 +3148,10 @@ let nextId = 3;
                             const baseName = item.isLab ? normalizedName(item.name) : item.name;
                             const hasLab = subjectCatalog.some((entry) => {
                                 if (!entry.isLab) return false;
-                                return normalizedName(entry.name) === normalizedName(baseName) && (entry.course || '') === (course || '') && (entry.semester || '') === (semester || '');
+                                return normalizedName(entry.name) === normalizedName(baseName)
+                                    && (entry.course || '') === (course || '')
+                                    && (entry.semester || '') === (semester || '')
+                                    && subjectCategoryMatches(entry, item.category || 'main', item.electiveType || 'program');
                             });
                             const labButtonLabel = hasLab ? 'Lab On' : 'Lab Off';
                             const labButtonClass = hasLab ? 'toggle-lab-btn active' : 'toggle-lab-btn';
@@ -2722,7 +3164,7 @@ let nextId = 3;
                                     </span>
                                     <div class="subject-actions">
                                         ${(item.course || item.semester) ? `<span class="subject-meta">${courseLabel}${semesterLabel}</span>` : ''}
-                                        <button type="button" class="${labButtonClass}" aria-label="Toggle lab for ${escapeHtml(buttonName)}" data-name="${escapeHtml(buttonName)}" data-course="${escapeHtml(course)}" data-semester="${escapeHtml(semester)}" title="${labButtonLabel}"></button>
+                                        <button type="button" class="${labButtonClass}" aria-label="Toggle lab for ${escapeHtml(buttonName)}" data-name="${escapeHtml(buttonName)}" data-course="${escapeHtml(course)}" data-semester="${escapeHtml(semester)}" data-category="${escapeHtml(item.category || 'main')}" data-elective-type="${escapeHtml(item.electiveType || 'program')}" title="${labButtonLabel}"></button>
                                     </div>
                                 </div>
                             `;
@@ -2745,7 +3187,7 @@ let nextId = 3;
                     const name = button.dataset.name || '';
                     const courseValue = button.dataset.course || dashboardCourse || 'B.Tech';
                     const semesterValue = button.dataset.semester || dashboardTimetableState?.currentSemester || 'semester1';
-                    await toggleSubjectLab(name, courseValue, semesterValue);
+                    await toggleSubjectLab(name, courseValue, semesterValue, button.dataset.category || 'main', button.dataset.electiveType || 'program');
                 });
             });
         }
@@ -2820,7 +3262,7 @@ let nextId = 3;
                 return;
             }
 
-            const selectedKeys = Array.from(document.querySelectorAll('#lab-subject-list input[type="checkbox"]:checked')).map(input => input.value);
+            const selectedKeys = Array.from(document.querySelectorAll('#lab-subject-list .lab-subject-selection input[type="checkbox"]:checked')).map(input => input.value);
             if (!selectedKeys.length) {
                 if (errorBox) {
                     errorBox.textContent = 'Select at least one lab subject.';
@@ -2829,13 +3271,37 @@ let nextId = 3;
                 return;
             }
 
-            const subjects = getLabSubjectOptions()
+            const labSubjectOptions = getLabSubjectOptions();
+            const previousSharedLabSubjects = sharedLabSubjects;
+            const nextSharedLabSubjects = getSelectedManageLabToggleSettings(selectedKeys, labSubjectOptions);
+            sharedLabSubjects = nextSharedLabSubjects;
+            const savedLocally = saveSharedLabSubjectsLocally(nextSharedLabSubjects);
+            if (!await saveSharedLabSubjectsToApi(nextSharedLabSubjects)) {
+                try {
+                    localStorage.setItem(PENDING_SHARED_LAB_SUBJECTS_STORAGE_KEY, JSON.stringify(nextSharedLabSubjects));
+                } catch (error) {
+                    console.warn('Pending shared lab settings could not be saved in this browser:', error);
+                }
+                if (errorBox) {
+                    errorBox.textContent = savedLocally
+                        ? 'Individual lab settings are saved in this browser but could not be synced to the database. Retry before adding the lab.'
+                        : 'Individual lab settings could not be saved. Retry before adding the lab.';
+                    errorBox.classList.add('show');
+                }
+                sharedLabSubjects = previousSharedLabSubjects;
+                return;
+            }
+            renderManageWorkloadSubjects();
+
+            const subjects = labSubjectOptions
                 .filter(item => selectedKeys.includes(subjectIdentity(item)))
                 .map(item => ({
                     key: subjectIdentity(item),
                     label: item.code ? `${item.name} (${item.code})` : item.name,
                     course: item.course || 'B.Tech',
-                    semester: item.semester || 'semester1'
+                    semester: item.semester || 'semester1',
+                    sharedAcrossBatches: isSharedLabSubject(item),
+                    individualLab: isSharedLabSubject(item)
                 }));
 
             const previousCatalog = labCatalog.slice();
@@ -2857,7 +3323,9 @@ let nextId = 3;
 
             if (nameInput) nameInput.value = '';
             if (idInput) idInput.value = '';
-            document.querySelectorAll('#lab-subject-list input[type="checkbox"]').forEach(input => input.checked = false);
+            document.querySelectorAll('#lab-subject-list .lab-subject-selection input[type="checkbox"]').forEach(input => input.checked = false);
+            renderManageLabSubjects();
+            renderManageWorkloadSubjects();
             renderLabs();
 
             if (successBox) {
@@ -3157,6 +3625,9 @@ let nextId = 3;
             const generateButton = document.getElementById('dashboardGenerateTimetableButton');
             if (generateButton) generateButton.disabled = true;
             try {
+                if (!appSettingsLoaded && !await loadAppSettingsFromApi()) {
+                    throw new Error('Lab mode settings could not be loaded from the database. Timetable generation was stopped.');
+                }
                 const payload = await apiRequest('/api/workload-forms');
                 const requirementsBySection = buildDashboardWorkloadRequirementsBySection(payload.forms || []);
                 const sections = Object.keys(requirementsBySection);
@@ -3225,11 +3696,26 @@ let nextId = 3;
                     const selectedIds = new Set((form.selectedSubjectIds || []).map(String));
                     (form.selectedSubjects || []).forEach(subject => {
                         if (!selectedIds.has(String(subject.id))) return;
+                        const catalogSubject = typeof subjectCatalog !== 'undefined' && Array.isArray(subjectCatalog)
+                            ? subjectCatalog.find(item => (
+                                String(item.id || '') === String(subject.id)
+                                || subjectIdentity(item) === String(subject.id)
+                            ))
+                            : null;
+                        const subjectCode = subject.code || catalogSubject?.code || '';
+                        const individualLab = isManageLabToggleEnabled({
+                            ...subject,
+                            code: subjectCode,
+                            course: subject.course || form.course,
+                            semester: subject.semester || form.semester
+                        });
 
                         const common = {
                             subjectName: subject.name,
-                            subjectCode: subject.code || '',
+                            subjectCode,
                             teacher: form.facultyName,
+                            course: subject.course || form.course,
+                            semester: subject.semester || form.semester,
                             classType: 'Lecture'
                         };
                         if (subject.isLab) {
@@ -3238,7 +3724,14 @@ let nextId = 3;
                                 (subject.assignedSections || []).forEach(section => {
                                     if (!['sectionA', 'sectionB', 'sectionC'].includes(section)) return;
                                     requirementsBySection[section] ||= [];
-                                    requirementsBySection[section].push({ ...common, classType: 'Lab', lecturesPerWeek: labCount });
+                                    requirementsBySection[section].push({
+                                        ...common,
+                                        section,
+                                        classType: 'Lab',
+                                        lecturesPerWeek: labCount,
+                                        individualLab,
+                                        sharedAcrossBatches: false
+                                    });
                                 });
                             }
                             return;
@@ -3249,8 +3742,15 @@ let nextId = 3;
                         (subject.assignedSections || []).forEach(section => {
                             if (!['sectionA', 'sectionB', 'sectionC'].includes(section)) return;
                             requirementsBySection[section] ||= [];
-                            if (lectureCount > 0) requirementsBySection[section].push({ ...common, lecturesPerWeek: lectureCount });
-                            if (labCount > 0) requirementsBySection[section].push({ ...common, classType: 'Lab', lecturesPerWeek: labCount });
+                            if (lectureCount > 0) requirementsBySection[section].push({ ...common, section, lecturesPerWeek: lectureCount });
+                            if (labCount > 0) requirementsBySection[section].push({
+                                ...common,
+                                section,
+                                classType: 'Lab',
+                                lecturesPerWeek: labCount,
+                                individualLab,
+                                sharedAcrossBatches: false
+                            });
                         });
                     });
                 });
@@ -3258,35 +3758,255 @@ let nextId = 3;
             return requirementsBySection;
         }
 
-        function createDashboardLabBatchAssignments(firstRequirement, secondRequirement, sessionIndex) {
-            const orderedRequirements = sessionIndex % 2 === 0
-                ? [firstRequirement, secondRequirement]
-                : [secondRequirement, firstRequirement];
-            return orderedRequirements.map((requirement, index) => ({
-                batch: index === 0 ? 'P1' : 'P2',
-                subject: requirement.subjectCode ? `${requirement.subjectName} (${requirement.subjectCode})` : requirement.subjectName,
+        function createDashboardSharedLabBatchAssignments(requirement) {
+            const subject = requirement.subjectCode
+                ? `${requirement.subjectName} (${requirement.subjectCode})`
+                : requirement.subjectName;
+            return ['P1', 'P2'].map(batch => ({
+                batch,
+                subject,
                 subjectName: requirement.subjectName || '',
                 subjectCode: requirement.subjectCode || '',
                 teacher: requirement.teacher,
                 room: '',
-                classType: 'Lab'
+                classType: 'Lab',
+                sharedAcrossBatches: true
             }));
+        }
+
+        function hasAmbiguousDashboardLabSubjectName(item = {}) {
+            if (typeof subjectCatalog === 'undefined' || !Array.isArray(subjectCatalog)) return false;
+            const name = sharedLabSubjectName(item.subjectName || item.name || item.subject);
+            const codes = new Set(subjectCatalog
+                .filter(subject => (
+                    (subject.course || 'B.Tech') === (item.course || 'B.Tech')
+                    && (subject.semester || 'semester1') === (item.semester || 'semester1')
+                    && sharedLabSubjectName(subject.name) === name
+                    && subject.code
+                ))
+                .map(subject => normalizeSubjectValue(subject.code)));
+            return codes.size > 1;
+        }
+
+        function sameDashboardLabSubject(first = {}, second = {}) {
+            const firstCode = normalizeSubjectValue(first.subjectCode || first.code);
+            const secondCode = normalizeSubjectValue(second.subjectCode || second.code);
+            if (firstCode && secondCode) return firstCode === secondCode;
+            const sameName = sharedLabSubjectName(first.subjectName || first.name || first.subject)
+                === sharedLabSubjectName(second.subjectName || second.name || second.subject);
+            return sameName && !hasAmbiguousDashboardLabSubjectName(first);
+        }
+
+        function mergeSharedDashboardLabRequirements(requirements = []) {
+            const groups = [];
+            const merged = [];
+            requirements.forEach(requirement => {
+                if (!requirement.sharedAcrossBatches) {
+                    merged.push(requirement);
+                    return;
+                }
+                const scope = JSON.stringify([
+                    requirement.course || dashboardCourse,
+                    requirement.semester || dashboardTimetableState.currentSemester,
+                    requirement.section || dashboardTimetableState.currentSection
+                ]);
+                let group = groups.find(candidate => candidate.scope === scope
+                    && sameDashboardLabSubject(candidate.requirement, requirement));
+                if (!group) {
+                    group = { scope, requirement, duplicates: [] };
+                    groups.push(group);
+                }
+                group.duplicates.push(requirement);
+            });
+
+            const conflicts = [];
+            groups.forEach(group => {
+                const teachers = new Set(group.duplicates.map(requirement => normalizeTeacherName(requirement.teacher)));
+                if (teachers.size !== 1 || teachers.has('')) {
+                    const names = Array.from(new Set(group.duplicates.map(requirement => requirement.teacher || 'unknown faculty')));
+                    conflicts.push(`${group.requirement.subjectName}: shared P1/P2 workload has conflicting or missing faculty (${names.join(', ')}); no shared session was scheduled.`);
+                    return;
+                }
+                merged.push({
+                    ...group.requirement,
+                    lecturesPerWeek: Math.max(...group.duplicates.map(requirement => (
+                        Math.max(0, Number(requirement.lecturesPerWeek) || 0)
+                    )))
+                });
+            });
+            return { requirements: merged, conflicts };
         }
 
         function canScheduleDashboardSessionOnDay(daySessionCounts, day, dailyLimit) {
             return (daySessionCounts.get(day) || 0) < dailyLimit;
         }
 
-        function hasSameDashboardLabBatchAssignments(firstAssignments, secondAssignments) {
-            const assignmentKey = assignment => [
-                normalizeSubjectValue(assignment.subjectCode || assignment.subjectName || assignment.subject),
-                normalizeTeacherName(assignment.teacher),
-                normalizeSubjectValue(assignment.batch)
-            ].join('|');
-            const firstKeys = firstAssignments.map(assignmentKey).sort();
-            const secondKeys = secondAssignments.map(assignmentKey).sort();
-            return firstKeys.length === secondKeys.length
-                && firstKeys.every((key, index) => key === secondKeys[index]);
+        function partitionDashboardLabRequirements(requirements = []) {
+            const shared = requirements.filter(requirement => requirement.sharedAcrossBatches);
+            const individual = requirements.filter(requirement => (
+                !requirement.sharedAcrossBatches && requirement.individualLab === true
+            ));
+            return {
+                shared,
+                individual,
+                pairable: requirements.filter(requirement => (
+                    !requirement.sharedAcrossBatches && requirement.individualLab !== true
+                ))
+            };
+        }
+
+        function createDashboardPairedLabBatchAssignment(requirement, batch) {
+            const subject = requirement.subjectCode
+                ? `${requirement.subjectName} (${requirement.subjectCode})`
+                : requirement.subjectName;
+            return {
+                batch,
+                subject,
+                subjectName: requirement.subjectName || '',
+                subjectCode: requirement.subjectCode || '',
+                teacher: requirement.teacher,
+                room: '',
+                classType: 'Lab',
+                sharedAcrossBatches: false
+            };
+        }
+
+        function pairDashboardLabRequirements(requirements = []) {
+            const subjectGroups = [];
+            const conflicts = [];
+            requirements.forEach(requirement => {
+                const scope = JSON.stringify([
+                    requirement.course || dashboardCourse,
+                    requirement.semester || dashboardTimetableState.currentSemester,
+                    requirement.section || dashboardTimetableState.currentSection
+                ]);
+                let group = subjectGroups.find(candidate => candidate.scope === scope
+                    && sameDashboardLabSubject(candidate.requirement, requirement));
+                if (!group) {
+                    group = { scope, requirement, duplicates: [] };
+                    subjectGroups.push(group);
+                }
+                group.duplicates.push(requirement);
+            });
+
+            const subjects = [];
+            subjectGroups.forEach(group => {
+                const teachers = new Set(group.duplicates.map(requirement => normalizeTeacherName(requirement.teacher)));
+                if (teachers.size !== 1 || teachers.has('')) {
+                    const names = Array.from(new Set(group.duplicates.map(requirement => requirement.teacher || 'unknown faculty')));
+                    conflicts.push(`${group.requirement.subjectName}: P1/P2 lab workload has conflicting or missing faculty (${names.join(', ')}); no paired session was scheduled.`);
+                    return;
+                }
+                subjects.push({
+                    ...group.requirement,
+                    lecturesPerWeek: Math.max(...group.duplicates.map(requirement => (
+                        Math.max(0, Number(requirement.lecturesPerWeek) || 0)
+                    )))
+                });
+            });
+
+            const sessionUnits = subjects.flatMap(requirement => (
+                Array.from({ length: requirement.lecturesPerWeek }, () => requirement)
+            ));
+            const mappedLabIds = requirement => typeof getLabsForSubject === 'function'
+                ? getLabsForSubject(
+                    requirement.course || dashboardCourse,
+                    requirement.semester || dashboardTimetableState.currentSemester,
+                    requirement.subjectCode
+                        ? `${requirement.subjectName} (${requirement.subjectCode})`
+                        : requirement.subjectName
+                ).map(lab => String(lab.id || lab.name || '').trim().toLowerCase()).filter(Boolean)
+                : [];
+            const shareMappedLab = (first, second) => {
+                const firstIds = new Set(mappedLabIds(first));
+                return mappedLabIds(second).some(labId => firstIds.has(labId));
+            };
+            const paired = [];
+            const unmatched = [];
+            while (sessionUnits.length) {
+                const first = sessionUnits.shift();
+                const secondIndex = sessionUnits.findIndex(candidate => (
+                    JSON.stringify([
+                        candidate.course || dashboardCourse,
+                        candidate.semester || dashboardTimetableState.currentSemester,
+                        candidate.section || dashboardTimetableState.currentSection
+                    ]) === JSON.stringify([
+                        first.course || dashboardCourse,
+                        first.semester || dashboardTimetableState.currentSemester,
+                        first.section || dashboardTimetableState.currentSection
+                    ])
+                    && !sameDashboardLabSubject(first, candidate)
+                    && normalizeTeacherName(first.teacher) !== normalizeTeacherName(candidate.teacher)
+                    && !shareMappedLab(first, candidate)
+                ));
+                if (secondIndex < 0) {
+                    unmatched.push(first);
+                    continue;
+                }
+                const second = sessionUnits.splice(secondIndex, 1)[0];
+                paired.push({
+                    course: first.course || dashboardCourse,
+                    semester: first.semester || dashboardTimetableState.currentSemester,
+                    section: first.section || dashboardTimetableState.currentSection,
+                    classType: 'Lab',
+                    lecturesPerWeek: 1,
+                    pairedAcrossBatches: true,
+                    batchAssignments: [
+                        createDashboardPairedLabBatchAssignment(first, 'P1'),
+                        createDashboardPairedLabBatchAssignment(second, 'P2')
+                    ]
+                });
+            }
+
+            unmatched.forEach(requirement => {
+                const label = requirement.subjectCode
+                    ? `${requirement.subjectName} (${requirement.subjectCode})`
+                    : requirement.subjectName;
+                conflicts.push(`${label}: needs a second different lab subject with a distinct teacher and mapped lab resource for a P1/P2 session.`);
+            });
+            return { requirements: paired, conflicts };
+        }
+
+        function clearStaleDashboardLabBatchAssignments(requirements) {
+            const labRequirements = requirements.filter(requirement => (
+                String(requirement.classType || '').toLowerCase().includes('lab')
+            ));
+            if (!labRequirements.length) return;
+
+            const semester = dashboardTimetableState.currentSemester;
+            const section = dashboardTimetableState.currentSection;
+            const slotDataStore = getDashboardTimetableSlotData(dashboardCourse);
+            Object.keys(slotDataStore).forEach(key => {
+                const [slotSemester, slotSection] = key.split('|');
+                if (slotSemester !== semester || slotSection !== section) return;
+                const slot = slotDataStore[key];
+                const hasBatchAssignments = Array.isArray(slot?.batchAssignments) && slot.batchAssignments.length;
+                const hasBatchLabels = hasBatchAssignments
+                    ? slot.batchAssignments.some(assignment => ['P1', 'P2'].includes(assignment.batch))
+                    : false;
+                const includesManagedLab = hasBatchAssignments
+                    ? (slot.sharedAcrossBatches || hasBatchLabels)
+                        && slot.batchAssignments.some(assignment => labRequirements.some(requirement => (
+                            sameDashboardLabSubject(assignment, requirement)
+                        )))
+                    : (() => {
+                        const subject = normalizeSubjectValue(slot?.subject || slot?.subjectName);
+                        if (!/\bp1\b/i.test(subject) || !/\bp2\b/i.test(subject) || !subject.includes('/')) return false;
+                        return labRequirements.some(requirement => {
+                            const labels = [
+                                normalizeSubjectValue(requirement.subjectCode),
+                                sharedLabSubjectName(requirement.subjectName)
+                            ]
+                                .filter(Boolean);
+                            return labels.some(label => subject.includes(label));
+                        });
+                    })();
+                if (!includesManagedLab) return;
+
+                const [, , day, slotIndex] = key.split('|');
+                delete slotDataStore[key];
+                setDashboardScheduleCellValue(dashboardCourse, semester, section, day, Number(slotIndex), '-');
+            });
         }
 
         function parseTimeRangeToMinutes(range) {
@@ -3600,6 +4320,22 @@ let nextId = 3;
         async function autoGenerateDashboardTimetable(requirements) {
             const semester = dashboardTimetableState.currentSemester;
             const section = dashboardTimetableState.currentSection;
+            requirements = requirements.map(requirement => {
+                if (!String(requirement.classType || '').toLowerCase().includes('lab')) return requirement;
+                if (requirement.sharedAcrossBatches === true) return requirement;
+                const scopedRequirement = {
+                    ...requirement,
+                    course: requirement.course || dashboardCourse,
+                    semester: requirement.semester || semester
+                };
+                return {
+                    ...requirement,
+                    individualLab: typeof requirement.individualLab === 'boolean'
+                        ? requirement.individualLab
+                        : isManageLabToggleEnabled(scopedRequirement),
+                    sharedAcrossBatches: false
+                };
+            });
             const schedule = getDashboardTimetableData(dashboardCourse)[semester]?.[section];
             if (!schedule) {
                 return { filledCount: 0, conflicts: ['Timetable view is not available for generation.'] };
@@ -3611,6 +4347,14 @@ let nextId = 3;
             const conflicts = [];
             let filledCount = 0;
             const slotDataStore = getDashboardTimetableSlotData(dashboardCourse);
+            clearStaleDashboardLabBatchAssignments(requirements);
+            const labRequirements = requirements.filter(req => String(req.classType || '').toLowerCase().includes('lab'));
+            const mergedLabRequirements = mergeSharedDashboardLabRequirements(labRequirements);
+            requirements = [
+                ...requirements.filter(req => !String(req.classType || '').toLowerCase().includes('lab')),
+                ...mergedLabRequirements.requirements
+            ];
+            conflicts.push(...mergedLabRequirements.conflicts);
 
             const timetableCourses = Array.from(new Set([
                 ...Object.keys(dashboardTimetableSlotDataByCourse || {}),
@@ -3630,148 +4374,59 @@ let nextId = 3;
                 });
             });
 
-            const labRequirements = requirements.filter(req => String(req.classType || '').toLowerCase().includes('lab'));
-            const labPairs = [];
-            for (let index = 0; index + 1 < labRequirements.length; index += 2) {
-                labPairs.push([labRequirements[index], labRequirements[index + 1]]);
-            }
-            if (labRequirements.length % 2) {
-                const unpaired = labRequirements[labRequirements.length - 1];
-                conflicts.push(`${unpaired.teacher} - ${unpaired.subjectName} (${unpaired.lecturesPerWeek}/week): needs a second lab subject for a P1/P2 session.`);
-            }
+            const labRequirementGroups = partitionDashboardLabRequirements(mergedLabRequirements.requirements);
+            const pairedLabRequirements = pairDashboardLabRequirements(labRequirementGroups.pairable);
+            conflicts.push(...pairedLabRequirements.conflicts);
+            requirements = [
+                ...requirements.filter(req => !String(req.classType || '').toLowerCase().includes('lab')),
+                ...labRequirementGroups.shared,
+                ...labRequirementGroups.individual,
+                ...pairedLabRequirements.requirements
+            ];
 
-            const matchesLabRequirement = (assignment, requirement, slot) => {
-                if (!assignment || normalizeTeacherName(assignment.teacher) !== normalizeTeacherName(requirement.teacher)) return false;
-                if (!/lab/i.test(assignment.classType || slot?.classType || assignment.subject || '')) return false;
-                const code = normalizeSubjectValue(assignment.subjectCode);
-                const name = normalizeSubjectValue(assignment.subjectName || assignment.subject);
-                const expectedCode = normalizeSubjectValue(requirement.subjectCode);
-                const expectedName = normalizeSubjectValue(requirement.subjectName);
-                return expectedCode && code ? expectedCode === code : expectedName === name;
-            };
-
-            labPairs.forEach(([firstRequirement, secondRequirement]) => {
-                const firstName = normalizeSubjectValue(firstRequirement.subjectCode || firstRequirement.subjectName);
-                const secondName = normalizeSubjectValue(secondRequirement.subjectCode || secondRequirement.subjectName);
-                if (firstName === secondName) {
-                    conflicts.push(`${firstRequirement.subjectName}: P1/P2 need two different lab subjects.`);
-                    return;
-                }
-                if (normalizeTeacherName(firstRequirement.teacher) === normalizeTeacherName(secondRequirement.teacher)) {
-                    conflicts.push(`${firstRequirement.subjectName} / ${secondRequirement.subjectName}: P1 and P2 need different faculty members.`);
-                    return;
-                }
-
-                const requestedFirst = Math.max(0, Number(firstRequirement.lecturesPerWeek) || 0);
-                const requestedSecond = Math.max(0, Number(secondRequirement.lecturesPerWeek) || 0);
-                const required = Math.min(requestedFirst, requestedSecond);
-                if (requestedFirst !== requestedSecond) {
-                    conflicts.push(`${firstRequirement.subjectName} / ${secondRequirement.subjectName}: weekly lab counts differ (${requestedFirst}/${requestedSecond}); only ${required} paired sessions can be scheduled, so the higher requested count will not be met.`);
-                }
-                if (!required) return;
-
-                const sessionCountsByDay = new Map();
-                Object.keys(slotDataStore).forEach(key => {
-                    const [slotSemester, slotSection, day, slotIndexText] = key.split('|');
-                    if (slotSemester !== semester || slotSection !== section) return;
-                    const slot = slotDataStore[key];
-                    const assignments = getDashboardSlotAssignments(slot);
-                    if (!assignments.some(item => matchesLabRequirement(item, firstRequirement, slot))
-                        || !assignments.some(item => matchesLabRequirement(item, secondRequirement, slot))) return;
-                    const slotIndex = Number(slotIndexText);
-                    if (slotIndex > 0) {
-                        const previous = slotDataStore[`${semester}|${section}|${day}|${slotIndex - 1}`];
-                        const previousAssignments = getDashboardSlotAssignments(previous);
-                        if (previousAssignments.some(item => matchesLabRequirement(item, firstRequirement, previous))
-                            && previousAssignments.some(item => matchesLabRequirement(item, secondRequirement, previous))
-                            && hasSameDashboardLabBatchAssignments(assignments, previousAssignments)) return;
-                    }
-                    sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
-                });
-                let assigned = Array.from(sessionCountsByDay.values()).reduce((total, count) => total + count, 0);
-
-                for (const dailyLimit of [1, 2]) {
-                    for (const day of shuffledDashboardValues(days)) {
-                        if (assigned >= required) break;
-                        if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) continue;
-
-                        for (const slotIndex of shuffledDashboardValues(Array.from({ length: periodCount }, (_, index) => index))) {
-                            if (assigned >= required) break;
-                            if (!canScheduleDashboardSessionOnDay(sessionCountsByDay, day, dailyLimit)) break;
-                            if (slotIndex >= periodCount - 1
-                                || !isDashboardSlotEmpty(semester, section, day, slotIndex)
-                                || !isDashboardSlotEmpty(semester, section, day, slotIndex + 1)) continue;
-
-                            const assignments = [
-                                { requirement: firstRequirement, teacher: normalizeTeacherName(firstRequirement.teacher), subject: firstRequirement.subjectCode ? `${firstRequirement.subjectName} (${firstRequirement.subjectCode})` : firstRequirement.subjectName },
-                                { requirement: secondRequirement, teacher: normalizeTeacherName(secondRequirement.teacher), subject: secondRequirement.subjectCode ? `${secondRequirement.subjectName} (${secondRequirement.subjectCode})` : secondRequirement.subjectName }
-                            ];
-                            const unavailable = assignments.some(({ requirement, teacher, subject }) => (
-                                isTeacherAssignedInOtherSection(semester, day, slotIndex, requirement.teacher, section)
-                                || isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, requirement.teacher, section)
-                                || (teacherSchedule[teacher] && (teacherSchedule[teacher][`${day}-${slotIndex}`] || teacherSchedule[teacher][`${day}-${slotIndex + 1}`]))
-                                || findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, subject)
-                                || findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, subject)
-                            ));
-                            if (unavailable) continue;
-
-                            const batchAssignments = createDashboardLabBatchAssignments(
-                                firstRequirement,
-                                secondRequirement,
-                                assigned
-                            );
-                            const displaySubject = batchAssignments.map(item => `${item.subject} (${item.batch})`).join(' / ');
-                            const slotInfo = {
-                                subject: displaySubject,
-                                subjectName: displaySubject,
-                                subjectCode: '',
-                                teacher: batchAssignments.map(item => `${item.batch}: ${item.teacher}`).join(' / '),
-                                room: '',
-                                classTeacher: '',
-                                studentNumber: '',
-                                academicSession: '',
-                                classType: 'Lab',
-                                batchAssignments
-                            };
-                            const slotKey1 = `${semester}|${section}|${day}|${slotIndex}`;
-                            const slotKey2 = `${semester}|${section}|${day}|${slotIndex + 1}`;
-                            slotDataStore[slotKey1] = { ...slotInfo };
-                            slotDataStore[slotKey2] = { ...slotInfo, batchAssignments: batchAssignments.map(item => ({ ...item })) };
-                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
-                            setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
-
-                            assignments.forEach(({ requirement, teacher }) => {
-                                if (!teacherSchedule[teacher]) teacherSchedule[teacher] = {};
-                                teacherSchedule[teacher][`${day}-${slotIndex}`] = true;
-                                teacherSchedule[teacher][`${day}-${slotIndex + 1}`] = true;
-                            });
-                            sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
-                            assigned += 1;
-                            filledCount += 2;
-                        }
-                    }
-                }
-
-                if (assigned < required) {
-                    conflicts.push(`${firstRequirement.teacher} / ${secondRequirement.teacher} - ${firstRequirement.subjectName} / ${secondRequirement.subjectName} (${assigned}/${required} paired sessions)`);
-                }
-            });
-
-            shuffledDashboardValues(requirements.filter(req => !String(req.classType || '').toLowerCase().includes('lab')))
+            shuffledDashboardValues(requirements)
                 .sort((a, b) => b.lecturesPerWeek - a.lecturesPerWeek)
                 .forEach((req) => {
                 const isLab = String(req.classType || '').toLowerCase().includes('lab');
+                const isPairedLab = Boolean(req.pairedAcrossBatches && Array.isArray(req.batchAssignments));
                 const required = req.lecturesPerWeek;
-                const displaySubject = req.subjectCode ? `${req.subjectName} (${req.subjectCode})` : req.subjectName;
+                const displaySubject = isPairedLab
+                    ? req.batchAssignments.map(assignment => `${assignment.subject} (${assignment.batch})`).join(' / ')
+                    : req.subjectCode ? `${req.subjectName} (${req.subjectCode})` : req.subjectName;
                 const normalizedSubjectCode = normalizeSubjectValue(req.subjectCode);
                 const normalizedSubjectName = normalizeSubjectValue(req.subjectName);
                 const normalizedTeacher = normalizeTeacherName(req.teacher);
                 const sessionCountsByDay = new Map();
+                const pairedSessionCountsByDay = new Map();
                 Object.keys(slotDataStore).forEach(key => {
                     const [slotSemester, slotSection, day, slotIndexText] = key.split('|');
                     if (slotSemester !== semester || slotSection !== section) return;
                     const slot = slotDataStore[key];
                     const slotIndex = Number(slotIndexText);
+                    if (isPairedLab) {
+                        const assignments = getDashboardSlotAssignments(slot);
+                        const matchingBatches = req.batchAssignments.filter(expected => (
+                            assignments.some(item => item.batch === expected.batch
+                                && normalizeTeacherName(item.teacher) === normalizeTeacherName(expected?.teacher)
+                                && sameDashboardLabSubject(item, expected))
+                        ));
+                        if (!matchingBatches.length) return;
+                        if (slotIndex > 0) {
+                            const previous = slotDataStore[`${semester}|${section}|${day}|${slotIndex - 1}`];
+                            const previousAssignments = getDashboardSlotAssignments(previous);
+                            const previousContainsSubject = req.batchAssignments.some(expected => (
+                                previousAssignments.some(item => item.batch === expected.batch
+                                    && normalizeTeacherName(item.teacher) === normalizeTeacherName(expected.teacher)
+                                    && sameDashboardLabSubject(item, expected))
+                            ));
+                            if (previousContainsSubject) return;
+                        }
+                        sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
+                        if (matchingBatches.length === req.batchAssignments.length) {
+                            pairedSessionCountsByDay.set(day, (pairedSessionCountsByDay.get(day) || 0) + 1);
+                        }
+                        return;
+                    }
                     const assignment = getDashboardSlotAssignments(slot).find(item => {
                         if (normalizeTeacherName(item.teacher) !== normalizedTeacher) return false;
                         if (Boolean(/lab/i.test(item.classType || slot.classType || item.subject || '')) !== isLab) return false;
@@ -3795,7 +4450,9 @@ let nextId = 3;
                     }
                     sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
                     });
-                let assignedThisReq = Array.from(sessionCountsByDay.values()).reduce((total, count) => total + count, 0);
+                let assignedThisReq = Array.from(
+                    (isPairedLab ? pairedSessionCountsByDay : sessionCountsByDay).values()
+                ).reduce((total, count) => total + count, 0);
 
                 for (const dailyLimit of [1, 2]) {
                     for (const day of shuffledDashboardValues(days)) {
@@ -3809,35 +4466,68 @@ let nextId = 3;
                                 if (slotIndex >= periodCount - 1) continue;
                                 if (!isDashboardSlotEmpty(semester, section, day, slotIndex)) continue;
                                 if (!isDashboardSlotEmpty(semester, section, day, slotIndex + 1)) continue;
-                                if (isTeacherAssignedInOtherSection(semester, day, slotIndex, req.teacher, section)) continue;
-                                if (isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, req.teacher, section)) continue;
-                                if (findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, displaySubject)) continue;
-                                if (findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, displaySubject)) continue;
+                                const labAssignments = isPairedLab
+                                    ? req.batchAssignments
+                                    : [{
+                                        teacher: req.teacher,
+                                        subject: displaySubject,
+                                        subjectName: req.subjectName,
+                                        subjectCode: req.subjectCode,
+                                        room: ''
+                                    }];
+                                const teacherKeys = labAssignments.map(assignment => normalizeTeacherName(assignment.teacher));
                                 const teacherKey1 = `${day}-${slotIndex}`;
                                 const teacherKey2 = `${day}-${slotIndex + 1}`;
-                                if ((teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey1]) || (teacherSchedule[normalizedTeacher] && teacherSchedule[normalizedTeacher][teacherKey2])) continue;
+                                const hasTeacherConflict = labAssignments.some((assignment, assignmentIndex) => (
+                                    isTeacherAssignedInOtherSection(semester, day, slotIndex, assignment.teacher, section)
+                                    || isTeacherAssignedInOtherSection(semester, day, slotIndex + 1, assignment.teacher, section)
+                                    || (teacherSchedule[teacherKeys[assignmentIndex]]
+                                        && (teacherSchedule[teacherKeys[assignmentIndex]][teacherKey1]
+                                            || teacherSchedule[teacherKeys[assignmentIndex]][teacherKey2]))
+                                ));
+                                if (hasTeacherConflict) continue;
+                                const hasLabConflict = labAssignments.some(assignment => (
+                                    findLabAssignmentConflict(day, slotIndex, dashboardCourse, semester, assignment.subject || displaySubject)
+                                    || findLabAssignmentConflict(day, slotIndex + 1, dashboardCourse, semester, assignment.subject || displaySubject)
+                                ));
+                                if (hasLabConflict) continue;
 
                                 const slotKey1 = `${semester}|${section}|${day}|${slotIndex}`;
                                 const slotKey2 = `${semester}|${section}|${day}|${slotIndex + 1}`;
                                 const slotInfo = {
                                     subject: displaySubject,
-                                    subjectName: req.subjectName || (req.subjectCode ? req.subjectName : ''),
-                                    subjectCode: req.subjectCode || '',
-                                    teacher: req.teacher,
+                                    subjectName: isPairedLab ? '' : req.subjectName || '',
+                                    subjectCode: isPairedLab ? '' : req.subjectCode || '',
+                                    teacher: isPairedLab
+                                        ? labAssignments.map(assignment => `${assignment.batch}: ${assignment.teacher}`).join(' / ')
+                                        : req.teacher,
                                     room: '',
                                     classTeacher: '',
                                     studentNumber: '',
                                     academicSession: '',
-                                    classType: req.classType
+                                    classType: req.classType,
+                                    sharedAcrossBatches: Boolean(req.sharedAcrossBatches),
+                                    pairedAcrossBatches: isPairedLab,
+                                    individualLab: Boolean(req.individualLab),
+                                    ...(isPairedLab
+                                        ? { batchAssignments: labAssignments }
+                                        : req.sharedAcrossBatches
+                                            ? { batchAssignments: createDashboardSharedLabBatchAssignments(req) }
+                                        : {})
                                 };
                                 slotDataStore[slotKey1] = slotInfo;
                                 slotDataStore[slotKey2] = slotInfo;
                                 setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex, displaySubject);
                                 setDashboardScheduleCellValue(dashboardCourse, semester, section, day, slotIndex + 1, displaySubject);
-                                if (!teacherSchedule[normalizedTeacher]) teacherSchedule[normalizedTeacher] = {};
-                                teacherSchedule[normalizedTeacher][teacherKey1] = true;
-                                teacherSchedule[normalizedTeacher][teacherKey2] = true;
+                                teacherKeys.forEach(teacherKey => {
+                                    if (!teacherSchedule[teacherKey]) teacherSchedule[teacherKey] = {};
+                                    teacherSchedule[teacherKey][teacherKey1] = true;
+                                    teacherSchedule[teacherKey][teacherKey2] = true;
+                                });
                                 sessionCountsByDay.set(day, (sessionCountsByDay.get(day) || 0) + 1);
+                                if (isPairedLab) {
+                                    pairedSessionCountsByDay.set(day, (pairedSessionCountsByDay.get(day) || 0) + 1);
+                                }
                                 assignedThisReq += 1;
                                 filledCount += 2;
                             } else {
@@ -3870,7 +4560,10 @@ let nextId = 3;
                 }
 
                 if (assignedThisReq < required) {
-                    conflicts.push(`${req.teacher} - ${displaySubject} (${assignedThisReq}/${required})`);
+                    const requirementLabel = isPairedLab
+                        ? req.batchAssignments.map(assignment => `${assignment.batch}: ${assignment.teacher} - ${assignment.subject}`).join(' / ')
+                        : `${req.teacher} - ${displaySubject}`;
+                    conflicts.push(`${requirementLabel} (${assignedThisReq}/${required})`);
                 }
             });
 
@@ -4599,15 +5292,20 @@ let nextId = 3;
 
                     const cellClass = ['clickable', 'filled'];
                     if (isLabSlot) cellClass.push('lab-session');
-                    const batchTeachers = Array.isArray(slotData?.batchAssignments) ? slotData.batchAssignments : [];
+                    const batchTeachers = slotData?.sharedAcrossBatches
+                        ? getDashboardSlotAssignments(slotData)
+                        : Array.isArray(slotData?.batchAssignments) ? slotData.batchAssignments : [];
                     const teacherText = batchTeachers.length
                         ? batchTeachers.map(assignment => `${assignment.batch}: ${assignment.teacher || 'Faculty not assigned'}${assignment.room ? ` · ${assignment.room}` : ''}`).join(' / ')
                         : slotData?.teacher || '';
                     const teacherLine = teacherText ? `<div class="slot-teacher">${escapeHtml(teacherText)}</div>` : '';
+                    const batchScope = slotData?.sharedAcrossBatches
+                        ? '<div class="slot-batch-scope">1 shared lab for both batches</div>'
+                        : '';
                     const colspan = run > 1 ? ` colspan="${run}"` : '';
 
                     cells.push(`<td class="${cellClass.join(' ')}"${colspan} onclick="openDashboardEditModal('${day}', ${index}, '${semester}', '${section}')">
-                        <div class="slot-content"><strong>${displayValue}</strong></div>
+                        <div class="slot-content"><strong>${displayValue}</strong>${batchScope}</div>
                         ${teacherLine}
                     </td>`);
 
@@ -5021,23 +5719,26 @@ let nextId = 3;
             const schedule = getDashboardTimetableData(dashboardCourse)[semester]?.[section]?.[day] || [];
             const originalValue = schedule[slotIndex];
             const batchAssignments = Array.isArray(slotData.batchAssignments) ? slotData.batchAssignments : [];
-            const subject = batchAssignments[0]?.subject || slotData.subject || (originalValue && originalValue !== '-' && originalValue !== 'Lunch' ? originalValue : '');
+            const p1Assignment = batchAssignments.find(assignment => assignment.batch === 'P1') || batchAssignments[0];
+            const p2Assignment = batchAssignments.find(assignment => assignment.batch === 'P2');
+            const subject = p1Assignment?.subject || slotData.subject || (originalValue && originalValue !== '-' && originalValue !== 'Lunch' ? originalValue : '');
             dashboardTimetableEditing = { day, slotIndex, semester, section, key };
 
             // Populate teacher dropdown with current roster and set selection
             try { populateEditSlotTeacherDropdown(); } catch (e) { console.warn('populateEditSlotTeacherDropdown failed', e); }
             try { populateEditSlotSubjectDropdown(subject); } catch (e) { console.warn('populateEditSlotSubjectDropdown failed', e); }
-            populateEditSlotBatchSubjectDropdown('editSlotP1Subject', batchAssignments[0]?.subject || subject);
-            populateEditSlotBatchSubjectDropdown('editSlotP2Subject', batchAssignments[1]?.subject || '');
-            populateEditSlotBatchTeacherDropdown('editSlotP1Teacher');
-            populateEditSlotBatchTeacherDropdown('editSlotP2Teacher');
-            setElValue('editSlotTeacher', batchAssignments[0]?.teacher || slotData.teacher || '');
+            try { populateEditSlotTeacherDropdown('editSlotP2Teacher'); } catch (e) { console.warn('populate P2 teacher dropdown failed', e); }
+            try { populateEditSlotSubjectDropdown(p2Assignment?.subject || '', 'editSlotP2Subject', true); } catch (e) { console.warn('populate P2 lab subject dropdown failed', e); }
+            if (/lab/i.test(slotData.classType || '')) {
+                const primarySelectedOption = document.getElementById('editSlotSubject')?.selectedOptions?.[0];
+                if (primarySelectedOption?.dataset) primarySelectedOption.dataset.isLab = 'true';
+            }
+            setElValue('editSlotTeacher', p1Assignment?.teacher || slotData.teacher || '');
             setElValue('editSlotSubject', subject);
-            setElValue('editSlotRoom', batchAssignments[0]?.room || slotData.room || '');
-            setElValue('editSlotP1Teacher', batchAssignments[0]?.teacher || slotData.teacher || '');
-            setElValue('editSlotP1Room', batchAssignments[0]?.room || slotData.room || '');
-            setElValue('editSlotP2Teacher', batchAssignments[1]?.teacher || '');
-            setElValue('editSlotP2Room', batchAssignments[1]?.room || '');
+            setElValue('editSlotRoom', p1Assignment?.room || slotData.room || '');
+            setElValue('editSlotP2Teacher', p2Assignment?.teacher || '');
+            setElValue('editSlotP2Subject', p2Assignment?.subject || '');
+            setElValue('editSlotP2Room', p2Assignment?.room || '');
             setElValue('editSlotClassTeacher', slotData.classTeacher || '');
             setElValue('editSlotStudentNumber', slotData.studentNumber || '');
             setElValue('editSlotAcademicSession', slotData.academicSession || '2025-2026');
@@ -5080,57 +5781,77 @@ let nextId = 3;
             const subjectSelect = document.getElementById('editSlotSubject');
             const selectedOption = subjectSelect?.selectedOptions?.[0];
             const isLab = selectedOption?.dataset?.isLab === 'true';
-            const batchAssignments = isLab ? ['P1', 'P2'].map(batch => {
-                const subjectSelectForBatch = document.getElementById(`editSlot${batch}Subject`);
-                const option = subjectSelectForBatch?.selectedOptions?.[0];
-                const rawBatchSubject = subjectSelectForBatch?.value.trim() || '';
-                const parsed = extractSubjectNameAndCodeGlobal(rawBatchSubject);
-                return {
-                    batch,
-                    subject: rawBatchSubject,
-                    subjectName: parsed.name || rawBatchSubject,
-                    subjectCode: parsed.code || '',
-                    teacher: document.getElementById(`editSlot${batch}Teacher`)?.value.trim() || '',
-                    room: document.getElementById(`editSlot${batch}Room`)?.value.trim() || '',
-                    classType: 'Lab',
-                    isLab: option?.dataset?.isLab === 'true'
-                };
-            }) : [];
+            const individualLabRequested = isLab && isManageLabToggleEnabled({
+                name: subjParts.name || rawSubject,
+                code: subjParts.code,
+                course: dashboardCourse,
+                semester: sem
+            });
+            const batchAssignments = [];
             let subject = singleSubject;
             let subjPartsForSlot = subjParts;
             let teacher = document.getElementById('editSlotTeacher').value.trim();
             let room = document.getElementById('editSlotRoom').value.trim();
+            const isPairedLab = isLab && !individualLabRequested;
+            let p2Subject = '';
+            let p2SubjectParts = null;
+            let p2Teacher = '';
+            let p2Room = '';
 
             if (isLab) {
-                if (batchAssignments.some(assignment => !assignment.subject || !assignment.isLab)) {
-                    alert('Select a lab subject for both P1 and P2 batches.');
+                if (isPairedLab) {
+                    p2Subject = document.getElementById('editSlotP2Subject')?.value.trim() || '';
+                    p2SubjectParts = extractSubjectNameAndCodeGlobal(p2Subject);
+                    p2Teacher = document.getElementById('editSlotP2Teacher')?.value.trim() || '';
+                    p2Room = document.getElementById('editSlotP2Room')?.value.trim() || '';
+                    const p2IsLab = document.getElementById('editSlotP2Subject')?.selectedOptions?.[0]?.dataset?.isLab === 'true';
+                    if (!teacher || !room || !p2Subject || !p2IsLab || !p2Teacher || !p2Room) {
+                        showConflictModal('Select a different P2 lab subject, faculty member, and lab room for this P1/P2 session.');
+                        return;
+                    }
+                    if (sameDashboardLabSubject(
+                        { subjectName: subjParts.name, subjectCode: subjParts.code },
+                        { subjectName: p2SubjectParts.name, subjectCode: p2SubjectParts.code }
+                    )) {
+                        showConflictModal('P1 and P2 must be assigned different lab subjects when Individual lab is OFF.');
+                        return;
+                    }
+                    if (normalizeTeacherName(teacher) === normalizeTeacherName(p2Teacher)) {
+                        showConflictModal('P1 and P2 need different teachers for different lab subjects scheduled at the same time.');
+                        return;
+                    }
+                    if (normalizeLabSubjectValue(room) === normalizeLabSubjectValue(p2Room)) {
+                        showConflictModal('P1 and P2 need different lab rooms for different lab subjects scheduled at the same time.');
+                        return;
+                    }
+                    const p1Assignment = {
+                        batch: 'P1',
+                        subject,
+                        subjectName: subjParts.name || '',
+                        subjectCode: subjParts.code || '',
+                        teacher,
+                        room,
+                        classType: 'Lab',
+                        sharedAcrossBatches: false
+                    };
+                    const p2Label = p2SubjectParts.code
+                        ? `${p2SubjectParts.name} (${p2SubjectParts.code})`
+                        : p2SubjectParts.name || p2Subject;
+                    batchAssignments.push(p1Assignment, {
+                        batch: 'P2',
+                        subject: p2Label,
+                        subjectName: p2SubjectParts.name || '',
+                        subjectCode: p2SubjectParts.code || '',
+                        teacher: p2Teacher,
+                        room: p2Room,
+                        classType: 'Lab',
+                        sharedAcrossBatches: false
+                    });
+                    subject = `${singleSubject} (P1) / ${p2Label} (P2)`;
+                } else if (!teacher || !room) {
+                    alert('Select one faculty member and one lab room for this individual lab session.');
                     return;
                 }
-                if (normalizeLabSubjectValue(batchAssignments[0].subject) === normalizeLabSubjectValue(batchAssignments[1].subject)) {
-                    alert('Choose a different lab subject for P1 and P2.');
-                    return;
-                }
-                if (batchAssignments.some(assignment => !assignment.teacher)) {
-                    alert('Select a separate faculty member for each lab batch.');
-                    return;
-                }
-                if (normalizeTeacherName(batchAssignments[0].teacher) === normalizeTeacherName(batchAssignments[1].teacher)) {
-                    alert('Choose a different faculty member for P1 and P2 because both batches run at the same time.');
-                    return;
-                }
-                if (batchAssignments.some(assignment => !assignment.room)) {
-                    alert('Enter a separate lab room for each batch.');
-                    return;
-                }
-                if (normalizeLabSubjectValue(batchAssignments[0].room) === normalizeLabSubjectValue(batchAssignments[1].room)) {
-                    alert('Enter different lab rooms for P1 and P2 so each 30-student batch has its own lab space.');
-                    return;
-                }
-
-                subject = batchAssignments.map(assignment => `${assignment.subjectName}${assignment.subjectCode ? ` (${assignment.subjectCode})` : ''} (${assignment.batch})`).join(' / ');
-                subjPartsForSlot = { name: subject, code: '' };
-                teacher = batchAssignments.map(assignment => `${assignment.batch}: ${assignment.teacher}`).join(' / ');
-                room = batchAssignments.map(assignment => `${assignment.batch}: ${assignment.room || 'Room not assigned'}`).join(' / ');
             }
 
             const slotDataStore = getDashboardTimetableSlotData(dashboardCourse);
@@ -5150,7 +5871,7 @@ let nextId = 3;
             }
 
             const assignmentsToValidate = isLab
-                ? batchAssignments
+                ? (isPairedLab ? batchAssignments : [{ subject, teacher, room }])
                 : [{ subject, teacher, classType: 'Lecture' }];
 
             // Prevent global teacher and physical lab conflicts across courses, semesters and sections.
@@ -5172,7 +5893,7 @@ let nextId = 3;
                                 }
                                 const roomConflict = findRoomAssignmentConflict(day, validationSlotIndex, assignment.room, excludedConflictKeys);
                                 if (roomConflict) {
-                                    showConflictModal(`Conflict: ${assignment.batch} lab room is already assigned at ${formatTeacherAssignmentConflict(roomConflict)}.`);
+                                    showConflictModal(`Conflict: ${assignment.batch ? `${assignment.batch} lab room` : 'This lab room'} is already assigned at ${formatTeacherAssignmentConflict(roomConflict)}.`);
                                     return;
                                 }
                             }
@@ -5208,16 +5929,21 @@ let nextId = 3;
 
             const slotInfo = {
                 subject,
-                subjectName: subjPartsForSlot.name || '',
-                subjectCode: subjPartsForSlot.code || '',
-                teacher: teacher,
+                subjectName: isPairedLab ? '' : subjPartsForSlot.name || '',
+                subjectCode: isPairedLab ? '' : subjPartsForSlot.code || '',
+                teacher: isPairedLab
+                    ? batchAssignments.map(assignment => `${assignment.batch}: ${assignment.teacher}`).join(' / ')
+                    : teacher,
                 room,
                 classTeacher: document.getElementById('editSlotClassTeacher').value.trim(),
                 studentNumber: document.getElementById('editSlotStudentNumber').value.trim(),
                 academicSession: document.getElementById('editSlotAcademicSession').value.trim() || '2025-2026',
-                classType: isLab ? 'Lab' : 'Lecture'
+                classType: isLab ? 'Lab' : 'Lecture',
+                sharedAcrossBatches: false,
+                pairedAcrossBatches: Boolean(isPairedLab),
+                individualLab: Boolean(individualLabRequested)
             };
-            if (isLab) slotInfo.batchAssignments = batchAssignments.map(({ isLab: _isLab, ...assignment }) => assignment);
+            if (isPairedLab) slotInfo.batchAssignments = batchAssignments;
 
             slotDataStore[key] = slotInfo;
             setDashboardScheduleCellValue(dashboardCourse, sem, sec, day, slotIndex, subject);
@@ -5283,9 +6009,9 @@ let nextId = 3;
         }
 
         // Populate the `editSlotTeacher` dropdown with current teachers
-        function populateEditSlotTeacherDropdown() {
+        function populateEditSlotTeacherDropdown(targetId = 'editSlotTeacher') {
             syncApprovedFacultyNamesToTeacherRoster();
-            const sel = document.getElementById('editSlotTeacher');
+            const sel = document.getElementById(targetId);
             if (!sel) return;
             sel.innerHTML = '';
             const placeholder = document.createElement('option');
@@ -5302,78 +6028,37 @@ let nextId = 3;
             });
         }
 
-        function populateEditSlotBatchTeacherDropdown(id) {
-            syncApprovedFacultyNamesToTeacherRoster();
-            const select = document.getElementById(id);
-            if (!select) return;
-            const selectedValue = select.value;
-            select.innerHTML = '';
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = '(Select faculty)';
-            select.appendChild(placeholder);
-            teacherRoster.forEach(teacher => {
-                const option = document.createElement('option');
-                option.value = teacher;
-                option.textContent = teacher;
-                select.appendChild(option);
-            });
-            if (selectedValue) select.value = selectedValue;
-        }
-
-        function populateEditSlotBatchSubjectDropdown(id, selectedValue = '') {
-            const select = document.getElementById(id);
-            if (!select) return;
-            select.innerHTML = '';
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = '(Select lab subject)';
-            select.appendChild(placeholder);
-
-            const activeCourse = dashboardCourse || document.getElementById('time-setting-course')?.value || 'B.Tech';
-            const activeSemester = dashboardTimetableEditing?.semester
-                || dashboardTimetableState?.currentSemester
-                || document.getElementById('time-setting-current-semester')?.value
-                || 'semester1';
-            const subjects = subjectCatalog
-                .filter(item => item.isLab
-                    && item.name
-                    && (item.course || 'B.Tech') === activeCourse
-                    && (item.semester || 'semester1') === activeSemester)
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-            subjects.forEach(item => {
-                const option = document.createElement('option');
-                option.value = item.code ? `${item.name} (${item.code})` : item.name;
-                option.textContent = option.value;
-                option.dataset.isLab = 'true';
-                select.appendChild(option);
-            });
-
-            if (selectedValue && !Array.from(select.options).some(option => option.value === selectedValue)) {
-                const existingOption = document.createElement('option');
-                existingOption.value = selectedValue;
-                existingOption.textContent = `${selectedValue} (Existing)`;
-                existingOption.dataset.isLab = 'true';
-                select.appendChild(existingOption);
-            }
-            select.value = selectedValue;
-        }
-
         function updateDashboardSlotEditorMode() {
-            const isLab = document.getElementById('editSlotSubject')?.selectedOptions?.[0]?.dataset?.isLab === 'true';
-            const batchPanel = document.getElementById('editSlotLabBatches');
-            if (batchPanel) batchPanel.hidden = !isLab;
+            const subjectSelect = document.getElementById('editSlotSubject');
+            const selectedSubject = subjectSelect?.value.trim() || '';
+            const selectedSubjectParts = extractSubjectNameAndCodeGlobal(selectedSubject);
+            const isLab = subjectSelect?.selectedOptions?.[0]?.dataset?.isLab === 'true';
+            const isIndividualLab = isLab && isManageLabToggleEnabled({
+                name: selectedSubjectParts.name || selectedSubject,
+                code: selectedSubjectParts.code,
+                course: dashboardCourse,
+                semester: dashboardTimetableEditing?.semester || dashboardTimetableState.currentSemester
+            });
             ['editSlotSingleSubjectRow', 'editSlotSingleTeacherRow', 'editSlotSingleRoomRow'].forEach(id => {
                 const row = document.getElementById(id);
-                if (row) row.hidden = isLab;
+                if (row) row.hidden = false;
             });
-
-            if (isLab) {
-                const p1Subject = document.getElementById('editSlotP1Subject');
-                if (p1Subject && !p1Subject.value) {
-                    p1Subject.value = document.getElementById('editSlotSubject')?.value || '';
-                }
+            ['editSlotP2SubjectRow', 'editSlotP2TeacherRow', 'editSlotP2RoomRow'].forEach(id => {
+                const row = document.getElementById(id);
+                if (row) row.hidden = !isLab || isIndividualLab;
+            });
+            const p1SubjectLabel = document.querySelector('label[for="editSlotSubject"]');
+            const p1TeacherLabel = document.querySelector('label[for="editSlotTeacher"]');
+            const p1RoomLabel = document.querySelector('label[for="editSlotRoom"]');
+            if (p1SubjectLabel) p1SubjectLabel.textContent = isLab && !isIndividualLab ? 'P1 Lab Subject' : 'Subject';
+            if (p1TeacherLabel) p1TeacherLabel.textContent = isLab && !isIndividualLab ? 'P1 Teacher' : 'Teacher';
+            if (p1RoomLabel) p1RoomLabel.textContent = isLab && !isIndividualLab ? 'P1 Lab Room' : 'Room Number';
+            const hint = document.getElementById('editSlotLabAssignmentHint');
+            if (hint) {
+                hint.hidden = !isLab;
+                hint.textContent = isIndividualLab
+                    ? 'This subject is configured as an individual lab without P1/P2 pairing.'
+                    : 'Individual lab is OFF: assign different lab subjects, teachers, and rooms to P1 and P2.';
             }
         }
 
@@ -5384,8 +6069,8 @@ let nextId = 3;
             subjectSelect.dataset.batchEditorBound = 'true';
         }
 
-        function populateEditSlotSubjectDropdown(selectedValue = '') {
-            const sel = document.getElementById('editSlotSubject');
+        function populateEditSlotSubjectDropdown(selectedValue = '', targetId = 'editSlotSubject', labOnly = false) {
+            const sel = document.getElementById(targetId);
             if (!sel) return;
             sel.innerHTML = '';
             const placeholder = document.createElement('option');
@@ -5399,7 +6084,8 @@ let nextId = 3;
             const filtered = list.filter((item) => {
                 const matchesCourse = typeof item.course === 'string' && item.course === activeCourse;
                 const matchesSemester = typeof item.semester === 'string' && item.semester === activeSemester;
-                return matchesCourse && matchesSemester;
+                const isLabSubject = item.isLab || item.labEnabled || /\blab\b/i.test(item.name || '');
+                return matchesCourse && matchesSemester && (!labOnly || isLabSubject);
             });
 
             filtered.sort((a, b) => {
@@ -5410,10 +6096,11 @@ let nextId = 3;
             filtered.forEach(item => {
                 const opt = document.createElement('option');
                 const label = item.code ? `${item.name} (${item.code})` : item.name;
+                const isLabSubject = Boolean(item.isLab || item.labEnabled || /\blab\b/i.test(item.name || ''));
                 opt.value = label;
-                opt.textContent = item.isLab ? `${label} - LAB` : label;
-                opt.dataset.isLab = item.isLab ? 'true' : 'false';
-                if (item.isLab) {
+                opt.textContent = isLabSubject ? `${label} - LAB` : label;
+                opt.dataset.isLab = isLabSubject ? 'true' : 'false';
+                if (isLabSubject) {
                     opt.style.color = '#a855f7';
                 } else {
                     opt.style.color = '#111827';
@@ -5428,6 +6115,7 @@ let nextId = 3;
                     customOpt.value = selectedValue;
                     customOpt.textContent = `${selectedValue} (Existing)`;
                     customOpt.style.color = '#ef4444';
+                    customOpt.dataset.isLab = labOnly || /\blab\b/i.test(selectedValue) ? 'true' : 'false';
                     sel.appendChild(customOpt);
                 }
                 sel.value = selectedValue;
@@ -6014,7 +6702,13 @@ let nextId = 3;
                                 manageFormLectureCounts[labCountKey] = '1';
                                 saveManageFormLectureCounts();
                             }
-                            const saved = await toggleSubjectLab(subjectName, input.dataset.course || 'B.Tech', input.dataset.semester || 'semester1');
+                            const saved = await toggleSubjectLab(
+                                subjectName,
+                                input.dataset.course || 'B.Tech',
+                                input.dataset.semester || 'semester1',
+                                input.dataset.category || 'main',
+                                input.dataset.electiveType || 'program'
+                            );
                             if (!saved) {
                                 input.checked = !input.checked;
                                 updateLabel();

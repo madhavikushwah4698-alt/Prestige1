@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const {
   buildCollectionDiff,
+  mergeAppSettings,
   mergeRecordsById,
   publicAppSettings,
   sanitizeAppSettings,
@@ -15,6 +16,10 @@ const manageFormSubjectSelections = {
   'B.Tech|semester1|main|program|subject|data structures|cs.101': false,
   'M.Tech|semester2|main|program|subject|research methods|rm.202': true
 };
+const sharedLabSubjects = {
+  '["B.Tech","semester1","programming"]': true,
+  '["code","B.Tech","semester1","cs101"]': true
+};
 const labTimetable = {
   'Monday.1|Lab.A': { course: 'B.Tech', subject: 'C.S.E.' }
 };
@@ -22,6 +27,7 @@ const labTimetable = {
 const stored = sanitizeAppSettings({
   manageFormLectureCounts,
   manageFormSubjectSelections,
+  sharedLabSubjects,
   labTimetable
 });
 
@@ -35,7 +41,29 @@ assert.deepEqual(stored.manageFormSubjectSelections, [
 ]);
 assert.deepEqual(publicAppSettings(stored).manageFormLectureCounts, manageFormLectureCounts);
 assert.deepEqual(publicAppSettings(stored).manageFormSubjectSelections, manageFormSubjectSelections);
+assert.deepEqual(publicAppSettings(stored).sharedLabSubjects, sharedLabSubjects);
 assert.deepEqual(publicAppSettings(stored).labTimetable, labTimetable);
+const sharedLabCatalog = publicAppSettings(sanitizeAppSettings({
+  labCatalog: [{
+    id: 'LAB-109',
+    name: 'Coding',
+    subjects: [{ key: 'cocubes-coding', label: 'Cocubes coding Lab', sharedAcrossBatches: true }]
+  }]
+}));
+assert.equal(
+  sharedLabCatalog.labCatalog[0].subjects[0].sharedAcrossBatches,
+  true,
+  'The shared-batch selection should persist on its assigned lab subject.'
+);
+const sharedLabUpdate = mergeAppSettings(stored, {
+  labCatalog: [{ id: 'Lab-A', name: 'Lab A' }],
+  sharedLabSubjects: {}
+});
+assert.deepEqual(
+  publicAppSettings(sharedLabUpdate).sharedLabSubjects,
+  sharedLabSubjects,
+  'Saving ordinary app settings must preserve shared-lab toggles.'
+);
 
 const existingRecords = [
   { id: 1, course: 'B.Tech', value: 'unchanged' },

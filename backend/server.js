@@ -354,7 +354,12 @@ function serveStatic(req, res, pathname) {
   if (!filePath.startsWith(FRONTEND_ROOT + path.sep)) return false;
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return false;
 
-  res.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
+  res.writeHead(200, {
+    'Content-Type': contentTypeFor(filePath),
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
   if (req.method === 'HEAD') return res.end();
   fs.createReadStream(filePath).pipe(res);
   return true;
@@ -592,7 +597,8 @@ function sanitizeAppSettings(raw) {
         key: String(subject.key || '').trim(),
         label: String(subject.label || '').trim(),
         course: String(subject.course || 'B.Tech').trim(),
-        semester: String(subject.semester || 'semester1').trim()
+        semester: String(subject.semester || 'semester1').trim(),
+        sharedAcrossBatches: subject.sharedAcrossBatches === true
       })).filter(subject => subject.label) : [],
       createdAt: String(lab.createdAt || '')
     }))
@@ -601,12 +607,14 @@ function sanitizeAppSettings(raw) {
     typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
   ));
   const subjectSelections = sanitizeMapEntries(raw.manageFormSubjectSelections, value => typeof value === 'boolean');
+  const sharedLabSubjects = sanitizeMapEntries(raw.sharedLabSubjects, value => typeof value === 'boolean');
   const labTimetable = sanitizeMapEntries(raw.labTimetable, value => value !== undefined);
 
   return {
     id: 'global',
     labCatalog,
     labTimetable,
+    sharedLabSubjects,
     manageFormLectureCounts: lectureCounts,
     manageFormSubjectSelections: subjectSelections,
     teacherRoster: Array.isArray(raw.teacherRoster)
@@ -1455,9 +1463,17 @@ function publicAppSettings(raw) {
   return {
     ...settings,
     labTimetable: entriesToMap(settings.labTimetable),
+    sharedLabSubjects: entriesToMap(settings.sharedLabSubjects),
     manageFormLectureCounts: entriesToMap(settings.manageFormLectureCounts),
     manageFormSubjectSelections: entriesToMap(settings.manageFormSubjectSelections)
   };
+}
+
+function mergeAppSettings(existing, updates) {
+  const currentSettings = existing ? publicAppSettings(stripMongoId(existing)) : {};
+  const safeUpdates = { ...updates };
+  delete safeUpdates.sharedLabSubjects;
+  return sanitizeAppSettings({ ...currentSettings, ...safeUpdates });
 }
 
 async function handleWorkloadForms(req, res, pathname) {
@@ -1494,6 +1510,31 @@ async function handleAppSettings(req, res, pathname) {
     return send(res, 200, { settings: settings ? publicAppSettings(stripMongoId(settings)) : null });
   }
 
+  if (routeKey(req.method, pathname) === 'PUT /api/app-settings/shared-lab-subjects') {
+    if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
+    const body = await parseBody(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+      || !body.sharedLabSubjects || typeof body.sharedLabSubjects !== 'object' || Array.isArray(body.sharedLabSubjects)) {
+      return send(res, 400, { error: 'Shared lab settings must be a JSON object' });
+    }
+
+    const existing = await collections.appSettings.findOne({ _id: 'global' });
+    const settings = sanitizeAppSettings({ sharedLabSubjects: body.sharedLabSubjects }).sharedLabSubjects;
+    await collections.appSettings.updateOne(
+      { _id: 'global' },
+      {
+        $set: { sharedLabSubjects: settings, updatedAt: new Date().toISOString() },
+        $setOnInsert: { createdAt: new Date().toISOString() }
+      },
+      { upsert: true }
+    );
+    const publicSettings = publicAppSettings({
+      ...(existing ? stripMongoId(existing) : {}),
+      sharedLabSubjects: settings
+    });
+    return send(res, 200, { settings: publicSettings });
+  }
+
   if (routeKey(req.method, pathname) === 'PUT /api/app-settings') {
     if (auth.role !== 'admin') return send(res, 403, { error: 'Admin login required' });
     const body = await parseBody(req);
@@ -1505,14 +1546,25 @@ async function handleAppSettings(req, res, pathname) {
     }
     const rawSettings = body.settings || body;
     const existing = await collections.appSettings.findOne({ _id: 'global' });
+    const sanitizedUpdates = sanitizeAppSettings(rawSettings);
+    const settingsToUpdate = {};
+    ['labCatalog', 'labTimetable', 'manageFormLectureCounts', 'manageFormSubjectSelections', 'teacherRoster']
+      .forEach(key => {
+        if (Object.prototype.hasOwnProperty.call(rawSettings, key)) {
+          settingsToUpdate[key] = sanitizedUpdates[key];
+        }
+      });
     const settings = {
-      ...sanitizeAppSettings(rawSettings),
+      ...mergeAppSettings(existing, rawSettings),
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    await collections.appSettings.replaceOne(
+    await collections.appSettings.updateOne(
       { _id: 'global' },
-      { _id: 'global', ...settings },
+      {
+        $set: { ...settingsToUpdate, updatedAt: settings.updatedAt },
+        $setOnInsert: { createdAt: settings.createdAt }
+      },
       { upsert: true }
     );
     return send(res, 200, { settings: publicAppSettings(settings) });
@@ -1576,6 +1628,7 @@ module.exports = handleRequest;
 module.exports.resolveMongoConfig = resolveMongoConfig;
 module.exports.sanitizeAppSettings = sanitizeAppSettings;
 module.exports.publicAppSettings = publicAppSettings;
+module.exports.mergeAppSettings = mergeAppSettings;
 module.exports.buildCollectionDiff = buildCollectionDiff;
 module.exports.snapshotCollection = snapshotCollection;
 module.exports.mergeRecordsById = mergeRecordsById;

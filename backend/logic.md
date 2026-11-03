@@ -4,9 +4,45 @@ This guide explains how the backend works and how the timetable's **Generate fro
 
 ## Important distinction
 
-The Node.js backend is in `backend/server.js`. It authenticates requests and reads/writes MongoDB data, but it does **not** calculate generated timetable slots. The timetable generator and the P1/P2 lab-batch logic are in the browser code, `modules/app.js`. The browser fetches approved workload assignments from the backend, generates slots locally, and saves the result back through the timetable API.
+The Node.js backend is in `backend/server.js`. It authenticates requests and reads/writes MongoDB data, but it does **not** calculate generated timetable slots. The timetable generator and legacy batch-assignment compatibility logic are in the browser code, `modules/app.js`. The browser fetches approved workload assignments from the backend, generates slots locally, and saves the result back through the timetable API.
 
 The backend is exposed as a Vercel function by `api/index.js`; when run locally, `backend/server.js` also serves the frontend files.
+
+## Application architecture and overall flow
+
+This project follows a **monolithic application architecture** (more specifically, a small, three-tier monolithic web application), not a microservices architecture. Its frontend, API/business logic, and data access are separated into layers and files, but they are developed and deployed as one application; the backend API is not split into independently deployed domain services. MongoDB and Gmail SMTP are external dependencies/integrations, not microservices implemented by this project.
+
+The application has a browser-based frontend, a Node.js HTTP API, and MongoDB persistence:
+
+```text
+Browser
+  claude_clone.html + modules/styles.css + modules/app.js
+            |
+            | HTTP/JSON requests to /api/*
+            v
+Node.js API
+  api/index.js (Vercel entry point)
+  backend/server.js (API handlers and local static-file server)
+            |
+            | MongoDB Node.js driver
+            v
+MongoDB
+  admins, faculty, timetables, workloadForms, appSettings, etc.
+```
+
+- **Presentation layer:** `claude_clone.html` supplies the page, `modules/styles.css` supplies its styles, and `modules/app.js` handles browser interactions, API calls, rendering, and timetable generation. The browser keeps the working timetable state while the page is open.
+- **API/application layer:** `backend/server.js` handles HTTP requests, validates and authorizes operations, applies business rules, and reads or writes application data. The frontend sends JSON requests to the same origin's `/api/*` routes.
+- **Persistence layer:** MongoDB stores application records. The backend initializes the database and counters on startup and imports `backend/data/db.json` (or legacy state) only when application collections are empty.
+- **Email integration:** The backend can send invite and workload-form emails through Gmail SMTP when configured. Email delivery is an integration, not the primary data store.
+
+### Request and user-action flow
+
+1. A user opens the portal in a browser. In a local run, `backend/server.js` serves the frontend files; on Vercel, the `/` rewrite serves `claude_clone.html` and `/api/*` requests are routed to `api/index.js`.
+2. The browser loads the page's styles and JavaScript. The frontend calls API endpoints to load data and, when needed, authenticate the user.
+3. The API parses the request, checks its route, validates the input, and enforces the applicable role or token rules.
+4. For data-backed operations, the backend reads or updates MongoDB and returns a JSON response. The frontend uses the response to update the visible page.
+5. For edits, the frontend sends the changed data to the appropriate API endpoint. Timetable dashboard saves are queued/debounced, and the backend merges timetable records by ID before persisting changes.
+6. For **Generate from Workload**, the browser retrieves submitted workload forms, builds section requirements, and calculates timetable placements locally. It then saves the updated dashboard timetable through the API. The backend stores the result; it does not run the timetable-placement algorithm.
 
 ## Programming language and data-structure primer
 
@@ -107,7 +143,7 @@ const sectionARequirements = submittedForms.flatMap(form =>
 | `history` | Archived timetable snapshots; the API keeps the newest 20 records. |
 | `teacherViews` | Faculty timetable views saved for admins. |
 | `workloadForms` | Forwarded faculty forms, submitted subject choices, and section assignments. |
-| `appSettings` | One global settings document: lab catalog/timetable, Manage Form counts/selections, and teacher roster. |
+| `appSettings` | One global settings document: lab catalog/timetable, individual-lab toggles, Manage Form counts/selections, and teacher roster. |
 | `meta` | Atomic counters used to allocate numeric record IDs. |
 
 Most collections use diff-based writes: unchanged documents are not rewritten, changed/new documents are upserted, and explicit removals are deleted. The timetable `PUT` route first merges updates by `id`, so a partial dashboard save does not replace other timetable records or erase fields omitted from the update. Workload submissions and section assignments update their specific `workloadForms` document directly.
@@ -222,10 +258,11 @@ Mongo `_id` values are hidden from API responses. Time-setting, subject, history
    - a lab-only subject contributes `labCount`, falling back to `lectureCount`;
    - weekly counts are converted to non-negative whole numbers;
    - only the known section IDs A/B/C are included.
-6. **Generate each section in turn.** The UI temporarily selects each section with requirements and calls `autoGenerateDashboardTimetable()`. The current section is restored after the loop. The UI displays how many timetable cells were filled and any unmet weekly requirements.
-7. **Save the timetable.** Generation changes the browser's in-memory schedule and slot details. The dashboard's save queue sends the `dashboard-state` record to `PUT /api/timetables`; the backend merges it by ID and persists only changed documents.
+6. **Apply the individual-lab setting at generation time.** `buildDashboardWorkloadRequirementsBySection()` resolves the Manage Lab toggle for each subject using its identity and course/semester scope. A toggle-on lab is marked `individualLab` and remains independent; a toggle-off lab is eligible to pair with a different lab subject for P1/P2. Workload records remain unchanged.
+7. **Generate each section in turn.** The UI temporarily selects each section with requirements and calls `autoGenerateDashboardTimetable()`. The current section is restored after the loop. The UI displays how many timetable cells were filled and any unmet weekly requirements.
+8. **Save the timetable.** Generation changes the browser's in-memory schedule and slot details. The dashboard's save queue sends the `dashboard-state` record to `PUT /api/timetables`; the backend merges it by ID and persists only changed documents.
 
-If there are no submitted subject assignments with sections, generation stops and asks the admin to use Manage Workload first. Existing timetable entries are not cleared by generation; only empty cells are candidates.
+If there are no submitted subject assignments with sections, generation stops and asks the admin to use Manage Workload first. Existing timetable entries are preserved except legacy P1/P2-paired lab slots that match the current lab requirements; those stale slots are cleared so labs can be regenerated according to their current toggle state.
 
 ### Worked example: from form to timetable requirement
 
@@ -250,7 +287,7 @@ const slotData = {
 };
 ```
 
-The dashboard indexes slot details by a composite string key such as `semester1|sectionA|Monday|0`. It separately keeps a day/period grid for display. Lab records add a `batchAssignments` array for P1 and P2. These dashboard structures are bundled into the `dashboard-state` timetable record and sent as JSON to the backend for persistence.
+The dashboard indexes slot details by a composite string key such as `semester1|sectionA|Monday|0`. It separately keeps a day/period grid for display. Individual labs have one assignment and no batch labels; toggle-off paired labs keep separate P1 and P2 assignments in one slot. Previously saved same-subject shared assignments remain readable for compatibility, but the Manage Lab toggle no longer creates them. These dashboard structures are bundled into the `dashboard-state` timetable record and sent as JSON to the backend for persistence.
 
 ## Slot placement rules
 
@@ -267,70 +304,33 @@ The dashboard indexes slot details by a composite string key such as `semester1|
 
 The generator does not select or reserve a physical room for newly generated lab assignments; the generated slot room field is blank. The admin can enter rooms in the slot editor, which validates room conflicts.
 
-## P1/P2 lab batches and rotation
+## Individual lab setting
 
-Here, **P1** and **P2** are the two simultaneous student batches in one lab session. This is separate from MongoDB's database-write batching.
+The Manage Lab **Individual lab (no P1/P2)** toggle is persisted in `appSettings.sharedLabSubjects`, keyed by course, semester, and subject identity. Although the existing storage/API field retains its historical `sharedLabSubjects` name, an enabled toggle means this subject is scheduled individually, without P1/P2 pairing or labels. When disabled, it is paired with a different lab subject for P1 and P2. The setting is not stored on a lab-catalog row, so unrelated courses and semesters do not inherit it. The same subject setting applies independently to each section where that subject is assigned.
 
-### Workload pairing
-
-- Manage Workload identifies lab subjects with a positive lab count and displays them in pairs. The preview labels the first subject P1 for the first session and the second subject P2; the next session swaps them. An unpaired subject is called out because it cannot form a two-lab rotation.
-- During generation, lab requirements are paired in their requirement order. A paired session needs two different lab subjects and two different teachers. If either check fails, the generator reports a conflict.
-- If the two subjects request different weekly lab counts, only the lower count can form complete paired sessions; the difference is reported as an unmet requirement.
-- For each paired session, the generator places the two lab subjects into P1/P2, then swaps their batch labels on the next session (`assigned % 2`). The pair occupies two consecutive timetable periods and both batches are represented in the slot's `batchAssignments`.
-- The generator first tries one paired session per day, then allows a second session on a day if the weekly count remains short. Both teachers must be free in both periods and there must be no conflicting lab reservation. Each paired session fills two timetable cells.
-- An odd number of lab requirements leaves one unmatched requirement and produces a P1/P2 pairing conflict. Add/assign another lab subject to make a pair.
-
-### Worked example: P1/P2 rotation
-
-Assume two lab requirements have the same count of two sessions per week:
-
-```text
-Requirement 1: Data Structures Lab, teacher Asha, 2/week
-Requirement 2: Database Lab, teacher Ravi, 2/week
-```
-
-The first paired session is stored as:
-
-```js
-[
-  { batch: "P1", subjectName: "Data Structures Lab", teacher: "Asha" },
-  { batch: "P2", subjectName: "Database Lab", teacher: "Ravi" }
-]
-```
-
-For the second session the assignments swap:
-
-```js
-[
-  { batch: "P1", subjectName: "Database Lab", teacher: "Ravi" },
-  { batch: "P2", subjectName: "Data Structures Lab", teacher: "Asha" }
-]
-```
-
-The implementation uses the remainder operator (`%`) to alternate:
-
-```js
-const firstBatch = assigned % 2 === 0;
-```
-
-When `assigned` is `0`, `0 % 2` is `0`, so the first ordering is used. When `assigned` is `1`, `1 % 2` is `1`, so it swaps. The pair is placed in two adjacent timetable periods; both teachers must be free in both periods, and both cells carry the batch assignment data.
+- A toggle-on lab remains one subject/session, is counted once toward its weekly requirement, and occupies two consecutive timetable periods.
+- The subject is not paired with a second lab and has no P1/P2 batch assignments. Its timetable entry is displayed once.
+- Toggle-off lab workload sessions are paired with different subjects for P1 and P2 within the same section/course/semester. Each subject retains its own teacher and room, is counted once per paired session, and shares the same two-period time window.
+- A lab requirement without a different toggle-off subject, with no distinct teacher, or with both subjects mapped to the same lab resource is reported as unmatched instead of being scheduled unsafely.
+- The original workload forms are not modified, and settings are resolved separately by subject, course, and semester.
+- Lab placement continues to honor empty-slot, teacher, mapped-lab, and room conflict checks.
+- Before regeneration, legacy P1/P2-paired lab slots matching current requirements are cleared so obsolete batch assignments are not retained.
 
 ### Manual lab editing
 
 `saveDashboardSlot()` applies corresponding validation for manually entered lab slots:
 
-- P1 and P2 each need a lab subject, faculty member, and room.
-- The two subjects, faculty members, and rooms must be different.
+- With the Individual lab toggle ON, the editor accepts one lab subject, one faculty member, and one physical lab room.
+- When the selected subject's Individual lab toggle is ON, the editor stores one lab assignment with no batch labels. When OFF, it requires different lab subjects, teachers, and rooms for P1 and P2.
 - A lab uses the selected period and the immediately following period; the following period must exist and be free.
 - Teacher, lab, and room conflicts are checked across courses, semesters, and sections before the slot is written.
-- Both cells store lab details with a `batchAssignments` array, where each item contains its batch, subject, teacher, room, and class type. Other fields such as class teacher, student count, and academic session are stored on the slot too.
-
-The editor validates explicit P1/P2 assignments. The automatic generator rotates subject-to-batch assignment but leaves each generated batch room empty for later editing.
+- Both cells store the relevant subject, teacher, room, class type, and other slot details. Toggle-off P1/P2 pairs use `batchAssignments` to preserve each batch's distinct assignment.
 
 ## Other important behavior
 
 - **Timetable history:** the browser archives a section snapshot before clearing it. The history API stores schedule and slot details and limits the history collection to the newest 20 entries.
 - **Lab timetable/settings:** `appSettings` holds the lab catalog, lab timetable reservations, Manage Form counts/selections, and manually imported teacher roster. Generated workload lab assignments appear in the mapped lab's timetable when their subject name/code matches the lab allocation; a trailing `Lab` in the saved allocation label is treated as an equivalent subject name. The API sanitizes these fields and returns keyed maps to the browser.
+- **Lab pairing:** The Manage Lab toggle persists per subject/course/semester through `PUT /api/app-settings/shared-lab-subjects`. Enabling it does not change `workloadForms`; enabled subjects schedule individually, while disabled subjects pair with a different lab subject for P1/P2. Teacher and mapped-lab conflict checks apply to both assignments.
 - **Faculty workload view:** faculty can list only their own forwarded forms; admin Manage Workload reads all forms and updates selected-subject section assignments.
 - **Email delivery:** missing Gmail configuration or SMTP errors are returned as delivery status. The form/invite is still saved, so an admin can see and address an email that was not sent.
 
@@ -354,7 +354,8 @@ The editor validates explicit P1/P2 assignments. The automatic generator rotates
 | `GET /api/workload-forms/faculty`, `POST /api/workload-forms/:id/faculty-submit` | Faculty | List and submit the current faculty member's forms. |
 | `GET /api/workload-forms/:token`, `POST /api/workload-forms/:token/submit` | Form token | Open and submit an emailed form. |
 | `PATCH /api/workload-forms/:id/subjects/:subjectId/sections` | Admin | Assign selected subject to sections. |
-| `GET/PUT /api/app-settings` | Admin | Read and save the singleton settings document. |
+| `GET/PUT /api/app-settings` | Admin | Read and save the singleton settings document while preserving shared-lab toggle settings. |
+| `PUT /api/app-settings/shared-lab-subjects` | Admin | Save shared-lab toggles independently from other app settings. |
 
 ## Tests related to these flows
 

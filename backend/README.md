@@ -34,9 +34,11 @@ In the admin portal, open **Manage Form**, choose an approved faculty member, se
 
 Email delivery requires `GMAIL_USER` and `GMAIL_APP_PASSWORD`. Set `APP_ORIGIN` to the deployed portal URL so the emailed form link is reachable by faculty.
 
-The dashboard's **Generate from Workload** action uses submitted faculty subject selections and the weekly lecture/lab counts from **Manage Form**. It generates assignments for every section selected for each faculty-subject pair in **Manage Workload**, using only empty slots and respecting teacher availability, lab pairing, and the once-per-day-per-subject limit within each section. The same faculty member may teach the same subject to multiple sections on the same day when separate slots are available. It reports section-specific shortfalls when existing timetable entries or scheduling constraints prevent the requested weekly counts from being met.
+The dashboard's **Generate from Workload** action uses submitted faculty subject selections and the weekly lecture/lab counts from **Manage Form**. It generates assignments for every section selected for each faculty-subject pair in **Manage Workload**, using only empty slots and respecting teacher availability, lab resources, consecutive lab periods, and the once-per-day-per-subject limit within each section. Toggle-off lab subjects are paired as different subjects for P1 and P2 in one time session; an unmatched lab is reported rather than silently scheduled on its own. It reports section-specific shortfalls when existing timetable entries or scheduling constraints prevent the requested weekly counts from being met.
 
-Manage Form counts, subject choices, and lab timetable settings are saved in MongoDB's singleton `appSettings` document and loaded when an admin signs in. Dotted subject/course keys are stored as key-value entries so MongoDB does not interpret them as nested field paths. Forwarded forms, each faculty member's submitted subject IDs, and section assignments are stored in `workloadForms`; Manage Workload fetches those records from MongoDB. Workload updates target the affected form, so an unrelated app-data save cannot replace the workload collection.
+Manage Lab provides an **Individual lab (no P1/P2)** toggle for each lab subject. When enabled, that subject is generated as an individual session, with no P1/P2 pairing or labels. When disabled, different lab subjects are assigned together as P1 and P2, sharing one two-period timetable session while retaining separate subjects, teachers, and rooms. The setting is stored in MongoDB's `appSettings.sharedLabSubjects`, scoped by course, semester, and subject identity. Workload entries and assignments for other sections or subjects are not merged. All labs remain subject to teacher, room, and lab-resource conflict checks. The original workload forms remain unchanged.
+
+Manage Form counts, subject choices, individual-lab toggles, and lab timetable settings are saved in MongoDB's singleton `appSettings` document and loaded when an admin signs in. Dotted subject/course keys are stored as key-value entries so MongoDB does not interpret them as nested field paths. Forwarded forms, each faculty member's submitted subject IDs, and section assignments are stored in `workloadForms`; Manage Workload fetches those records from MongoDB. Workload updates target the affected form, so an unrelated app-data save cannot replace the workload collection.
 
 Collection writes apply only changed, added, or explicitly removed records; unrelated records are not deleted and rewritten during a save. Database-backed IDs use atomic MongoDB counters, and workload submissions and section assignments update their specific form document. This keeps independent sections' updates from overwriting one another and makes refreshed views load the saved database state.
 
@@ -71,6 +73,7 @@ POST   /api/timetables
 PATCH  /api/timetables/:id
 GET    /api/app-settings
 PUT    /api/app-settings
+PUT    /api/app-settings/shared-lab-subjects
 GET    /api/workload-forms
 POST   /api/workload-forms
 GET    /api/workload-forms/faculty
