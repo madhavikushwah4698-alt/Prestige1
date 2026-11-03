@@ -1021,21 +1021,36 @@
         }
 
         .lab-shared-switch {
+            display: flex;
+            width: 100%;
+            min-width: 0;
+            min-height: 38px;
+            box-sizing: border-box;
+            align-items: center;
             justify-content: flex-start;
             gap: 8px;
             padding-top: 9px;
             border-top: 1px solid rgba(27, 42, 74, 0.08);
             cursor: pointer;
+            white-space: normal;
         }
 
         .lab-shared-switch span {
+            display: inline-block;
             flex: 0 0 38px;
+            width: 38px;
+            height: 21px;
+            box-sizing: border-box;
+            background-color: #cbd6e5;
+            box-shadow: inset 0 0 0 1px #bdc9d8;
         }
 
         .lab-shared-switch strong {
+            min-width: 0;
             color: #53647b;
             font-size: 11px;
             line-height: 1.3;
+            overflow-wrap: anywhere;
         }
 
         .lab-shared-badge {
@@ -2687,6 +2702,25 @@
 
         .manage-form-switch input:not(:checked) ~ strong {
             color: #8da0bb;
+        }
+
+        .manage-form-switch.lab-shared-switch span {
+            display: inline-block;
+            flex: 0 0 38px;
+            width: 38px;
+            height: 21px;
+            box-sizing: border-box;
+            background-color: #cbd6e5;
+            box-shadow: inset 0 0 0 1px #bdc9d8;
+        }
+
+        .manage-form-switch.lab-shared-switch input:checked + span {
+            background-color: #18314f;
+            box-shadow: inset 0 0 0 1px #18314f;
+        }
+
+        .manage-form-switch.lab-shared-switch strong {
+            color: #53647b;
         }
 
         .manage-form-count {
